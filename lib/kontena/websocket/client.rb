@@ -7,6 +7,7 @@ class Kontena::Websocket::Client
   require_relative './client/connection'
 
   extend Forwardable
+  include Kontena::Logging
 
   attr_reader :uri
 
@@ -64,7 +65,9 @@ class Kontena::Websocket::Client
   # Allows #read to emit :open, :error.
   #
   # @raise [RuntimeError] XXX: already started?
-  def connect!
+  # @yield [ws_driver]
+  # @yieldparam ws_driver [Websocket::Driver]
+  def connect!(&block)
     @connection = self.connect
     @driver = ::WebSocket::Driver.client(@connection)
 
@@ -72,21 +75,22 @@ class Kontena::Websocket::Client
       @driver.set_header(k, v)
     end
 
-    @driver.on :close do
+    @driver.on :close do |code, reason|
+      info "#{url} closed with code #{code}: #{reason}"
+
       # close and cleanup socket
       self.disconnect!
     end
 
+    yield @driver
+
+    # might emit :error
     fail unless @driver.start
 
   rescue
     # cleanup on errors
     self.disconnect! if @connection
   end
-
-  # Register event handlers.
-  # Most events are emitted from the #read thread.
-  def_delegators :@driver, :on
 
   # Valid after on :open
   #
