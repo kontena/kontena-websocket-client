@@ -27,7 +27,7 @@ class Kontena::Websocket::Client
       ssl_version: ssl_version,
       ca_file: ssl_ca_file,
       ca_path: ssl_ca_path,
-      verify_mode: ssl_verify ? VERIFY_PEER : SSL_VERIFY_NONE,
+      verify_mode: ssl_verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSLOpenSSL::SSL::SSL_VERIFY_NONE,
     }
 
     unless @uri.scheme == 'ws' || @uri.scheme == 'wss'
@@ -186,7 +186,7 @@ class Kontena::Websocket::Client
   end
 
   # @return [Connection]
-  def connect!
+  def connect
     if ssl?
       @socket = self.connect_ssl
     else
