@@ -11,7 +11,7 @@ class Kontena::Websocket::Client
 
   attr_reader :uri
 
-  FRAME_SIZE = 1024
+  FRAME_SIZE = 4 * 1024
 
   # @param [String] url
   # @param headers [Hash{String => String}]
@@ -84,12 +84,18 @@ class Kontena::Websocket::Client
 
     yield @driver
 
-    # might emit :error
+    # XXX: might emit :error?
     fail unless @driver.start
 
-  rescue
+  rescue => exc
     # cleanup on errors
-    self.disconnect! if @connection
+    @driver = nil
+
+    # XXX: racy if the driver also emits :close?
+    self.disconnect!
+
+    # XXX: these should be emit :error instead?
+    raise
   end
 
   # Valid after on :open
@@ -127,8 +133,6 @@ class Kontena::Websocket::Client
     fail unless @driver.binary(bytes)
   end
 
-  # XXX: text! -> raise if unable to send?
-
   # Loop to read and parse websocket frames.
   # The websocket must be connected.
   #
@@ -149,8 +153,6 @@ class Kontena::Websocket::Client
   def close
     fail unless @driver.close
   end
-
-  private
 
   # Connect to TCP server.
   #
@@ -203,9 +205,6 @@ class Kontena::Websocket::Client
   def disconnect!
     @connection = nil
 
-    if @socket
-      @socket.close
-      @socket = nil
-    end
+    @socket.close if @socket
   end
 end
