@@ -13,6 +13,8 @@ class Kontena::Websocket::Client
 
   FRAME_SIZE = 4 * 1024
   X509_VERIFY_ERRORS = OpenSSL::X509.constants.grep(/^V_(ERR_|OK)/).map { |name| [OpenSSL::X509.const_get(name), name] }.to_h
+  CLOSE_NORMAL = 1000
+  CLOSE_ABNORMAL = 1006
 
   # @param [String] url
   # @param headers [Hash{String => String}]
@@ -70,6 +72,7 @@ class Kontena::Websocket::Client
   #  * close
   #
   # @raise
+  # @raise [Kontena::Websocket::CloseError]
   def run(&block)
     self.connect
     self.start(&block)
@@ -164,10 +167,10 @@ class Kontena::Websocket::Client
   # TODO: close timeout
   #
   # Eventually emits on :close, which will disconnect!
-  def close
+  def close(code = 1000, reason = nil)
     debug "close"
 
-    fail unless driver.close
+    fail unless driver.close(code, reason)
   end
 
 protected
@@ -254,6 +257,8 @@ protected
     @driver.on :close do |code, reason|
       debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
 
+      @close = Kontena::Websocket::CloseError.new(code, reason)
+
       # do not wait for server to close
       self.disconnect
     end
@@ -268,11 +273,18 @@ protected
   # The websocket must be connected.
   #
   # The thread calling this method will also emit websocket events.
+  #
+  # @raise [Kontena::Websocket::CloseError] abnormal close
   def read_loop(socket)
     loop do
       begin
         data = socket.readpartial(FRAME_SIZE)
       rescue EOFError
+        debug "EOF"
+
+        # do not clobber any earlier close error that we received
+        @close_error ||= Kontena::Websocket::CloseError.new(CLOSE_ABNORMAL, "EOF")
+
         # just return, #run will handle disconnect
         break
       end
@@ -280,7 +292,7 @@ protected
       @driver.parse(data)
     end
 
-    debug "EOF"
+    raise @close_error unless @close_error.code == CLOSE_NORMAL
   end
 
   # Clear connection state, close socket
