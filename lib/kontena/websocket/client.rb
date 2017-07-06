@@ -37,6 +37,8 @@ class Kontena::Websocket::Client
     unless @uri.scheme == 'ws' || @uri.scheme == 'wss'
       raise ArgumentError, "Invalid websocket URI: #{@uri}"
     end
+
+    @recv_queue = []
   end
 
   # @return [String]
@@ -75,14 +77,16 @@ class Kontena::Websocket::Client
   #  * ping
   #  * close
   #
-  # @yield websocket open
+  # @yield [] websocket open
   # @raise
   # @raise [Kontena::Websocket::CloseError]
   # @return websocket closed by server
   def run(&block)
+    @open_block = block
+
     self.connect
     self.start
-    self.read_loop(@socket, &block)
+    self.read_loop(@socket)
 
     raise @close_error unless @close_error.code == CLOSE_NORMAL
 
@@ -135,18 +139,26 @@ class Kontena::Websocket::Client
     return @socket.peer_cert
   end
 
-  # Valid after on :open
+  # Valid once open
   #
   # @return [Integer]
   def http_status
     driver.status
   end
 
-  # Valid after on :open
+  # Valid once open
   #
   # @return [Websocket::Driver::Headers]
   def http_headers
     driver.headers
+  end
+
+  # Valid once open
+  #
+  # @yield [message] received websocket message payload
+  # @yieldparam message [String, Array<integer>] text or binary
+  def listen(&block)
+    @listen_block = block
   end
 
   # Send message frame, either text or binary.
@@ -273,6 +285,12 @@ protected
       @open = true
     end
 
+    @driver.on :message do |event|
+      debug "#{url} message: #{event.data} @\n\t#{caller.join("\n\t")}"
+
+      @recv_queue << event.data
+    end
+
     @driver.on :close do |code, reason|
       debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
 
@@ -292,8 +310,6 @@ protected
   #
   # The thread calling this method will also emit websocket events.
   def read_loop(socket, &block)
-    yielded = false
-
     loop do
       begin
         data = socket.readpartial(FRAME_SIZE)
@@ -309,9 +325,14 @@ protected
 
       @driver.parse(data)
 
-      if @open && !yielded
-        yielded = true
-        yield @driver
+      if @open && @open_block
+        # only called once
+        @open_block.call()
+        @open_block = nil
+      end
+
+      while message = @recv_queue.shift
+        @listen_block.call(message)
       end
     end
   end
