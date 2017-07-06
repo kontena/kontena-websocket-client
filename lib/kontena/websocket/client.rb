@@ -38,6 +38,7 @@ class Kontena::Websocket::Client
       raise ArgumentError, "Invalid websocket URI: #{@uri}"
     end
 
+    @mutex = Mutex.new # for @driver
     @recv_queue = []
   end
 
@@ -143,14 +144,18 @@ class Kontena::Websocket::Client
   #
   # @return [Integer]
   def http_status
-    driver.status
+    with_driver do |driver|
+      driver.status
+    end
   end
 
   # Valid once open
   #
   # @return [Websocket::Driver::Headers]
   def http_headers
-    driver.headers
+    with_driver do |driver|
+      driver.headers
+    end
   end
 
   # Valid once open
@@ -171,9 +176,13 @@ class Kontena::Websocket::Client
   def send(message)
     case message
     when String
-      fail unless driver.text(message)
+      with_driver do |driver|
+        fail unless driver.text(message)
+      end
     when Array
-      fail unless driver.binary(message)
+      with_driver do |driver|
+        fail unless driver.binary(message)
+      end
     else
       raise ArgumentError, "Invalid type: #{message.class}"
     end
@@ -187,7 +196,9 @@ class Kontena::Websocket::Client
   # @yield [] received pong
   # @raise [RuntimeError]
   def ping(string = '', &cb)
-    fail unless driver.ping(string, &cb)
+    with_driver do |driver|
+      fail unless driver.ping(string, &cb)
+    end
   end
 
   # Send close frame.
@@ -199,17 +210,24 @@ class Kontena::Websocket::Client
   def close(code = 1000, reason = nil)
     debug "close"
 
-    fail unless driver.close(code, reason)
+    with_driver do |driver|
+      fail unless driver.close(code, reason)
+    end
   end
 
 protected
 
+  # Call into driver with locked Mutex
+  #
   # @raise [RuntimeError] not connected
-  # @return [Websocket::Driver]
-  def driver
+  # @yield [driver]
+  # @yieldparam driver [Websocket::Driver]
+  def with_driver
     fail "not connected" unless @driver
 
-    return @driver
+    @mutex.synchronize {
+      yield @driver
+    }
   end
 
   # Connect to TCP server.
@@ -269,40 +287,42 @@ protected
   def start
     @driver = ::WebSocket::Driver.client(@connection)
 
-    @headers.each do |k, v|
-      @driver.set_header(k, v)
+    with_driver do |driver|
+      @headers.each do |k, v|
+        driver.set_header(k, v)
+      end
+
+      driver.on :error do |err|
+        debug "#{url} error: #{err} @\n\t#{caller.join("\n\t")}"
+
+        raise err
+      end
+
+      driver.on :open do
+        debug "#{url} open @\n\t#{caller.join("\n\t")}"
+
+        @open = true
+      end
+
+      driver.on :message do |event|
+        debug "#{url} message: #{event.data} @\n\t#{caller.join("\n\t")}"
+
+        @recv_queue << event.data
+      end
+
+      driver.on :close do |code, reason|
+        debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
+
+        # store for raise from run()
+        @close_error = Kontena::Websocket::CloseError.new(code, reason)
+
+        # do not wait for server to close
+        self.disconnect
+      end
+
+      # should not emit anything, not even :error
+      fail unless driver.start
     end
-
-    @driver.on :error do |err|
-      debug "#{url} error: #{err} @\n\t#{caller.join("\n\t")}"
-
-      raise err
-    end
-
-    @driver.on :open do
-      debug "#{url} open @\n\t#{caller.join("\n\t")}"
-
-      @open = true
-    end
-
-    @driver.on :message do |event|
-      debug "#{url} message: #{event.data} @\n\t#{caller.join("\n\t")}"
-
-      @recv_queue << event.data
-    end
-
-    @driver.on :close do |code, reason|
-      debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
-
-      # store for raise from run()
-      @close_error = Kontena::Websocket::CloseError.new(code, reason)
-
-      # do not wait for server to close
-      self.disconnect
-    end
-
-    # should not emit anything, not even :error
-    fail unless @driver.start
   end
 
   # Loop to read and parse websocket frames.
@@ -323,7 +343,9 @@ protected
         break
       end
 
-      @driver.parse(data)
+      with_driver do |driver|
+        driver.parse(data)
+      end
 
       if @open && @open_block
         # only called once
