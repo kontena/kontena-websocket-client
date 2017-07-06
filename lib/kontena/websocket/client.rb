@@ -77,6 +77,9 @@ class Kontena::Websocket::Client
     self.connect
     self.start(&block)
     self.read_loop(@socket)
+
+    raise @close_error unless @close_error.code == CLOSE_NORMAL
+
   ensure
     # ensure socket is closed and client disconnected on any of:
     #   * start error
@@ -257,7 +260,8 @@ protected
     @driver.on :close do |code, reason|
       debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
 
-      @close = Kontena::Websocket::CloseError.new(code, reason)
+      # store for raise from run()
+      @close_error = Kontena::Websocket::CloseError.new(code, reason)
 
       # do not wait for server to close
       self.disconnect
@@ -273,8 +277,6 @@ protected
   # The websocket must be connected.
   #
   # The thread calling this method will also emit websocket events.
-  #
-  # @raise [Kontena::Websocket::CloseError] abnormal close
   def read_loop(socket)
     loop do
       begin
@@ -291,8 +293,6 @@ protected
 
       @driver.parse(data)
     end
-
-    raise @close_error unless @close_error.code == CLOSE_NORMAL
   end
 
   # Clear connection state, close socket
