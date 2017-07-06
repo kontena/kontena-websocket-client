@@ -67,12 +67,19 @@ class Kontena::Websocket::Client
   # Other threads can then call the other threadsafe methods:
   #  * send
   #  * ping
+  #  * close
   #
   # @raise
   def run(&block)
     self.connect
     self.start(&block)
-    self.read_loop
+    self.read_loop(@socket)
+  ensure
+    # ensure socket is closed and client disconnected on any of:
+    #   * start error
+    #   * read error
+    #   * read EOF
+    self.disconnect
   end
 
   # @raise [ArgumentError] Not connected
@@ -154,9 +161,12 @@ class Kontena::Websocket::Client
   # Send close frame.
   #
   # XXX: threadsafe vs concurrent @driver.parse etc?
+  # TODO: close timeout
   #
   # Eventually emits on :close, which will disconnect!
   def close
+    debug "close"
+
     fail unless driver.close
   end
 
@@ -219,8 +229,7 @@ protected
   # Create @driver and send websocket handshake once connected
   # Yields driver for registering handlers, before starting.
   #
-  # Allows #read to emit :open later.
-  # XXX:May emit :error?
+  # Allows #read_loop to emit :open later.
   #
   # @raise [RuntimeError] XXX: already started?
   # @yield [ws_driver]
@@ -242,55 +251,56 @@ protected
       debug "#{url} open @\n\t#{caller.join("\n\t")}"
     end
 
-    @driver.on :message do |data|
-      debug "#{url} message: #{data.inspect} @\n\t#{caller.join("\n\t")}"
-    end
-
     @driver.on :close do |code, reason|
       debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
 
-      # close and cleanup socket
+      # do not wait for server to close
       self.disconnect
     end
 
     yield @driver
 
-    # XXX: might emit :error?
+    # should not emit anything, not even :error
     fail unless @driver.start
-
-  rescue => exc
-    # cleanup on errors
-    @driver = nil
-
-    # XXX: racy if the driver also emits :close?
-    self.disconnect
-
-    # XXX: these should be emit :error instead?
-    raise
   end
 
   # Loop to read and parse websocket frames.
   # The websocket must be connected.
   #
   # The thread calling this method will also emit websocket events.
-  def read_loop
+  def read_loop(socket)
     loop do
       begin
-        data = @socket.readpartial(FRAME_SIZE)
+        data = socket.readpartial(FRAME_SIZE)
       rescue EOFError
-        # XXX: emit :close?
+        # just return, #run will handle disconnect
         break
       end
 
       @driver.parse(data)
     end
+
+    debug "EOF"
   end
 
-  # Clear connection state, close socket.
+  # Clear connection state, close socket
+  #
+  # This gets called from:
+  # * run ensure
+  # * on :close
+  #
+  # This means that this can get called twice:
+  # * Server sends close frame: read -> on :close -> disconnect
+  # * Socket is closed: read EOF -> run ensure -> disconnect
   def disconnect
+    debug "disconnect"
+
     @driver = nil
     @connection = nil
 
+    # XXX: raises?
+    # XXX: timeout?
     @socket.close if @socket
+    @socket = nil
   end
 end
