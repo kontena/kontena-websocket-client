@@ -107,11 +107,11 @@ class Kontena::Websocket::Client
     !!@open
   end
 
-  # @raise [ArgumentError] Not connected
+  # @raise [RuntimeError] not connected
   # @return [nil] not an ssl connection, or no peer cert
   # @return [OpenSSL::X509::Certificate]
   def ssl_cert
-    raise ArgumentError, "Not connected" unless @socket
+    fail "not connected" unless @socket
     return nil unless ssl?
 
     return @socket.peer_cert
@@ -119,12 +119,12 @@ class Kontena::Websocket::Client
 
   # Verify and return SSL cert. Validates even if not ssl_verify.
   #
-  # @raise [ArgumentError] Not connected
+  # @raise [RuntimeError] not connected
   # @raise [OpenSSL::SSL::SSLError]
   # @return [nil] not an ssl connection
   # @return [OpenSSL::X509::Certificate]
   def ssl_cert!
-    raise ArgumentError, "Not connected" unless @socket
+    fail "not connected" unless @socket
     return nil unless ssl?
 
     x509_verify = @socket.verify_result

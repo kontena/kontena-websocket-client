@@ -44,6 +44,17 @@ describe Kontena::Websocket::Client do
     end
   end
 
+  describe '#ssl_cert' do
+    it "fails when not connected" do
+      expect{subject.ssl_cert}.to raise_error(RuntimeError, "not connected")
+    end
+  end
+  describe '#ssl_cert!' do
+    it "fails when not connected" do
+      expect{subject.ssl_cert!}.to raise_error(RuntimeError, "not connected")
+    end
+  end
+
   describe '#with_driver' do
     it "fails when not connected" do
       expect{subject.ping}.to raise_error(RuntimeError, "not connected")
@@ -66,6 +77,17 @@ describe Kontena::Websocket::Client do
     describe '#connected' do
       it "is connected" do
         expect(subject.connected?).to be true
+      end
+    end
+
+    describe '#ssl_cert' do
+      it "returns nil when not an SSL connection" do
+        expect(subject.ssl_cert).to be nil
+      end
+    end
+    describe '#ssl_cert!' do
+      it "returns nil when not an SSL connection" do
+        expect(subject.ssl_cert).to be nil
       end
     end
 
@@ -180,6 +202,48 @@ describe Kontena::Websocket::Client do
         subject.disconnect
 
         expect(subject).to_not be_connected
+      end
+    end
+  end
+
+  context 'with an SSL connection' do
+    subject { described_class.new('wss://socket.example.com') }
+
+    let(:socket) { instance_double(OpenSSL::SSL::SSLSocket) }
+    let(:cert) { instance_double(OpenSSL::X509::Certificate) }
+
+    before do
+      subject.instance_variable_set('@socket', socket)
+    end
+
+    describe '#ssl_cert' do
+      it "returns the peer cert" do
+        expect(socket).to receive(:peer_cert).and_return(cert)
+
+        expect(subject.ssl_cert).to eq cert
+      end
+    end
+
+    describe '#ssl_cert!' do
+      it "fails on verify result" do
+        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
+
+        expect{subject.ssl_cert!}.to raise_error(OpenSSL::SSL::SSLError, "certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT")
+      end
+
+      it "returns post_connection_check" do
+        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_OK)
+        expect(socket).to receive(:post_connection_check).and_raise(OpenSSL::SSL::SSLError, 'hostname "192.168.66.1" does not match the server certificate')
+
+        expect{subject.ssl_cert!}.to raise_error(OpenSSL::SSL::SSLError, 'hostname "192.168.66.1" does not match the server certificate')
+      end
+
+      it "returns the peer cert if valid" do
+        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_OK)
+        expect(socket).to receive(:post_connection_check).with('socket.example.com')
+        expect(socket).to receive(:peer_cert).and_return(cert)
+
+        expect(subject.ssl_cert!).to eq cert
       end
     end
   end
