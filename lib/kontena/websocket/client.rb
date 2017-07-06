@@ -84,8 +84,9 @@ class Kontena::Websocket::Client
   def run(&block)
     @open_block = block
 
-    self.connect
-    self.start
+    @connection = self.connect
+    @driver = self.start
+
     self.read_loop(@socket)
 
     raise @close_error unless @close_error.code == CLOSE_NORMAL
@@ -214,7 +215,7 @@ class Kontena::Websocket::Client
     end
   end
 
-protected
+#protected XXX: called by specs
 
   # Call into driver with locked Mutex
   #
@@ -272,7 +273,7 @@ protected
       @socket = self.connect_tcp
     end
 
-    @connection = Connection.new(@uri, @socket)
+    return Connection.new(@uri, @socket)
   end
 
   # Create @driver and send websocket handshake
@@ -281,48 +282,48 @@ protected
   #
   # @raise [RuntimeError] XXX: already started?
   def start
-    @driver = ::WebSocket::Driver.client(@connection)
+    driver = ::WebSocket::Driver.client(@connection)
 
-    with_driver do |driver|
-      @headers.each do |k, v|
-        driver.set_header(k, v)
-      end
-
-      # these are called from read_loop -> with_driver { driver.parse } with the @mutex held
-      # do not recurse back into with_driver!
-      driver.on :error do |err|
-        debug "#{url} error: #{err} @\n\t#{caller.join("\n\t")}"
-
-        # this will presumably propagate up out of #recv_loop, not this function
-        raise err
-      end
-
-      driver.on :open do
-        debug "#{url} open @\n\t#{caller.join("\n\t")}"
-
-        @open = true
-      end
-
-      driver.on :message do |event|
-        debug "#{url} message: #{event.data} @\n\t#{caller.join("\n\t")}"
-
-        # XXX: should this be a threadsafe Queue instead?
-        @recv_queue << event.data
-      end
-
-      driver.on :close do |code, reason|
-        debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
-
-        # store for raise from run()
-        @close_error = Kontena::Websocket::CloseError.new(code, reason)
-
-        # do not wait for server to close
-        self.disconnect
-      end
-
-      # not expected to emit anything, not even :error
-      fail unless driver.start
+    @headers.each do |k, v|
+      driver.set_header(k, v)
     end
+
+    # these are called from read_loop -> with_driver { driver.parse } with the @mutex held
+    # do not recurse back into with_driver!
+    driver.on :error do |err|
+      debug "#{url} error: #{err} @\n\t#{caller.join("\n\t")}"
+
+      # this will presumably propagate up out of #recv_loop, not this function
+      raise err
+    end
+
+    driver.on :open do
+      debug "#{url} open @\n\t#{caller.join("\n\t")}"
+
+      @open = true
+    end
+
+    driver.on :message do |event|
+      debug "#{url} message: #{event.data} @\n\t#{caller.join("\n\t")}"
+
+      # XXX: should this be a threadsafe Queue instead?
+      @recv_queue << event.data
+    end
+
+    driver.on :close do |code, reason|
+      debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
+
+      # store for raise from run()
+      @close_error = Kontena::Websocket::CloseError.new(code, reason)
+
+      # do not wait for server to close
+      self.disconnect
+    end
+
+    # not expected to emit anything, not even :error
+    fail unless driver.start
+
+    return driver
   end
 
   # Loop to read the socket, parse websocket frames, and call user blocks.
