@@ -50,6 +50,140 @@ describe Kontena::Websocket::Client do
     end
   end
 
+  context "with a connected driver" do
+    let(:socket) { instance_double(TCPSocket) }
+    let(:connection) { instance_double(Kontena::Websocket::Client) }
+    let(:driver) { instance_double(WebSocket::Driver::Client) }
+
+    let(:mutex) { subject.instance_variable_get('@mutex') }
+
+    before do
+      subject.instance_variable_set('@socket', socket)
+      subject.instance_variable_set('@connection', connection)
+      subject.instance_variable_set('@driver', driver)
+    end
+
+    describe '#connected' do
+      it "is connected" do
+        expect(subject.connected?).to be true
+      end
+    end
+
+    describe '#with_driver' do
+      it "locks the mutex and yields the driver" do
+        expect(mutex).to_not be_locked
+
+        expect{subject.with_driver do
+          expect(mutex).to be_locked
+          expect(mutex).to be_owned
+
+          fail 'test'
+        end}.to raise_error(RuntimeError, 'test')
+
+        expect(mutex).to_not be_locked
+      end
+    end
+
+    describe '#http_status' do
+      let(:status) { 200 }
+
+      it "returns the driver status" do
+        expect(driver).to receive(:status).and_return(status)
+
+        expect(subject.http_status).to eq status
+      end
+    end
+
+    describe '#http_headers' do
+      let(:headers) { WebSocket::Driver::Headers.new({'X-Test' => '1'}) }
+
+      it "returns the driver status" do
+        expect(driver).to receive(:headers).and_return(headers)
+
+        expect(subject.http_headers).to eq headers
+      end
+    end
+
+    describe '#send' do
+      it "fails with invalid type" do
+        expect{subject.send(false)}.to raise_error ArgumentError, "Invalid type: FalseClass"
+      end
+
+      it "sends text string" do
+        expect(driver).to receive(:text).with('asdf').and_return(true)
+
+        subject.send('asdf')
+      end
+
+      it "sends binary array" do
+        expect(driver).to receive(:binary).with([1, 2]).and_return(true)
+
+        subject.send([1, 2])
+      end
+
+      it "fails if driver returns false" do
+        expect(driver).to receive(:binary).with([1, 2]).and_return(false)
+
+        expect{subject.send([1, 2])}.to raise_error(RuntimeError)
+      end
+    end
+
+    describe '#ping' do
+      it "sends ping with defaults and no block" do
+        expect(driver).to receive(:ping).with('').and_return(true)
+
+        subject.ping
+      end
+
+      it "sends ping with message and callback" do
+        # XXX: how to expect block?
+        expect(driver).to receive(:ping).with('1').and_return(true)
+
+        subject.ping('1') do
+          # pong
+        end
+      end
+
+      it "fails if driver returns false" do
+        expect(driver).to receive(:ping).and_return(false)
+
+        expect{subject.ping}.to raise_error(RuntimeError)
+      end
+    end
+
+    describe '#close' do
+      it "closes with defaults" do
+        expect(driver).to receive(:close).with(1000, nil).and_return(true)
+
+        subject.close
+      end
+
+      it "closes with code and reason" do
+        expect(driver).to receive(:close).with(4020, "nope").and_return(true)
+
+        subject.close(4020, "nope")
+      end
+
+      it "fails if driver returns false" do
+        expect(driver).to receive(:close).and_return(false)
+
+        expect{subject.close}.to raise_error(RuntimeError)
+      end
+    end
+
+    describe '#disconnect' do
+      it "closes the socket and resets the state" do
+        expect(subject).to be_connected
+
+        expect(socket).to receive :close
+
+        subject.disconnect
+
+        expect(subject).to_not be_connected
+      end
+    end
+  end
+
   context 'for a ws:// url' do
     let(:url) { 'ws://socket.example.com/'}
     subject { described_class.new(url) }
@@ -187,28 +321,6 @@ describe Kontena::Websocket::Client do
         expect(ssl_context).to be_a OpenSSL::SSL::SSLContext
         expect(ssl_context.ca_path).to eq '/etc/kontena-agent/ca.d'
       end
-    end
-  end
-
-  describe '#disconnect' do
-    let(:socket) { double() }
-    let(:connection) { double() }
-    let(:driver) { double() }
-
-    before do
-      subject.instance_variable_set('@socket', socket)
-      subject.instance_variable_set('@connection', connection)
-      subject.instance_variable_set('@driver', driver)
-    end
-
-    it "closes the socket" do
-      expect(subject).to be_connected
-
-      expect(socket).to receive :close
-
-      subject.disconnect
-
-      expect(subject).to_not be_connected
     end
   end
 end
