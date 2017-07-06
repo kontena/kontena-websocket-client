@@ -63,7 +63,11 @@ class Kontena::Websocket::Client
     @uri.port || (@uri.scheme == "ws" ? 80 : 443)
   end
 
-  # Connect, send websocket handshake, and loop reading responses to emit events.
+  # Connect, send websocket handshake, and loop reading responses.
+  #
+  # Yield once websocket is open.
+  # Raises an error.
+  # Returns once websocket is closed by server.
   #
   # Intended to be called using a dedicated per-websocket thread.
   # Other threads can then call the other threadsafe methods:
@@ -71,12 +75,14 @@ class Kontena::Websocket::Client
   #  * ping
   #  * close
   #
+  # @yield websocket open
   # @raise
   # @raise [Kontena::Websocket::CloseError]
+  # @return websocket closed by server
   def run(&block)
     self.connect
-    self.start(&block)
-    self.read_loop(@socket)
+    self.start
+    self.read_loop(@socket, &block)
 
     raise @close_error unless @close_error.code == CLOSE_NORMAL
 
@@ -86,6 +92,14 @@ class Kontena::Websocket::Client
     #   * read error
     #   * read EOF
     self.disconnect
+  end
+
+  def connected?
+    @socket && @connection && @driver
+  end
+
+  def open?
+    @open
   end
 
   # @raise [ArgumentError] Not connected
@@ -240,7 +254,7 @@ protected
   # @raise [RuntimeError] XXX: already started?
   # @yield [ws_driver]
   # @yieldparam ws_driver [Websocket::Driver]
-  def start(&block)
+  def start
     @driver = ::WebSocket::Driver.client(@connection)
 
     @headers.each do |k, v|
@@ -255,6 +269,8 @@ protected
 
     @driver.on :open do
       debug "#{url} open @\n\t#{caller.join("\n\t")}"
+
+      @open = true
     end
 
     @driver.on :close do |code, reason|
@@ -267,8 +283,6 @@ protected
       self.disconnect
     end
 
-    yield @driver
-
     # should not emit anything, not even :error
     fail unless @driver.start
   end
@@ -277,7 +291,9 @@ protected
   # The websocket must be connected.
   #
   # The thread calling this method will also emit websocket events.
-  def read_loop(socket)
+  def read_loop(socket, &block)
+    yielded = false
+
     loop do
       begin
         data = socket.readpartial(FRAME_SIZE)
@@ -292,6 +308,11 @@ protected
       end
 
       @driver.parse(data)
+
+      if @open && !yielded
+        yielded = true
+        yield @driver
+      end
     end
   end
 
@@ -307,6 +328,7 @@ protected
   def disconnect
     debug "disconnect"
 
+    @open = false
     @driver = nil
     @connection = nil
 
