@@ -112,14 +112,14 @@ class Kontena::Websocket::Client
   #
   # @return [Integer]
   def http_status
-    @driver.status
+    driver.status
   end
 
   # Valid after on :open
   #
   # @return [Websocket::Driver::Headers]
   def http_headers
-    @driver.headers
+    driver.headers
   end
 
   # Send message frame, either text or binary.
@@ -132,9 +132,9 @@ class Kontena::Websocket::Client
   def send(message)
     case message
     when String
-      fail unless @driver.text(message)
+      fail unless driver.text(message)
     when Array
-      fail unless @driver.binary(message)
+      fail unless driver.binary(message)
     else
       raise ArgumentError, "Invalid type: #{message.class}"
     end
@@ -148,7 +148,7 @@ class Kontena::Websocket::Client
   # @yield [] received pong
   # @raise [RuntimeError]
   def ping(string = '', &cb)
-    fail unless @driver.ping(string, &cb)
+    fail unless driver.ping(string, &cb)
   end
 
   # Send close frame.
@@ -157,10 +157,18 @@ class Kontena::Websocket::Client
   #
   # Eventually emits on :close, which will disconnect!
   def close
-    fail unless @driver.close
+    fail unless driver.close
   end
 
 protected
+
+  # @raise [RuntimeError] not connected
+  # @return [Websocket::Driver]
+  def driver
+    fail "not connected" unless @driver
+
+    return @driver
+  end
 
   # Connect to TCP server.
   #
@@ -270,7 +278,7 @@ protected
       begin
         data = @socket.readpartial(FRAME_SIZE)
       rescue EOFError
-        # XXX: fail @driver?
+        # XXX: emit :close?
         break
       end
 
