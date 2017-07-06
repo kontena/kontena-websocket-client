@@ -61,59 +61,88 @@ class Kontena::Websocket::Client
     @uri.port || (@uri.scheme == "ws" ? 80 : 443)
   end
 
-  # Connect and send websocket handshake.
+  # Connect, send websocket handshake, and loop reading responses to emit events.
   #
-  # Allows #read to emit :open, :error.
+  # Intended to be called using a dedicated per-websocket thread.
+  # Other threads can then call the other threadsafe methods:
+  #  * send
+  #  * ping
   #
-  # @raise [RuntimeError] XXX: already started?
-  # @yield [ws_driver]
-  # @yieldparam ws_driver [Websocket::Driver]
-  def connect!(&block)
-    @connection = self.connect
-    @driver = ::WebSocket::Driver.client(@connection)
+  # @raise
+  def run(&block)
+    self.connect
+    self.start(&block)
+    self.read_loop
+  end
 
-    @headers.each do |k, v|
-      @driver.set_header(k, v)
+  # @raise [ArgumentError] Not connected
+  # @return [nil] not an ssl connection, or no peer cert
+  # @return [OpenSSL::X509::Certificate]
+  def ssl_cert
+    raise ArgumentError, "Not connected" unless @socket
+    return nil unless ssl?
+
+    return @socket.peer_cert
+  end
+
+  # Verify and return SSL cert. Validates even if not ssl_verify.
+  #
+  # @raise [ArgumentError] Not connected
+  # @raise [OpenSSL::SSL::SSLError]
+  # @return [nil] not an ssl connection
+  # @return [OpenSSL::X509::Certificate]
+  def ssl_cert!
+    raise ArgumentError, "Not connected" unless @socket
+    return nil unless ssl?
+
+    x509_verify = @socket.verify_result
+
+    unless x509_verify == OpenSSL::X509::V_OK
+      raise OpenSSL::SSL::SSLError, "certificate verify failed: #{X509_VERIFY_ERRORS[x509_verify]}"
     end
 
-    @driver.on :close do |code, reason|
-      info "#{url} closed with code #{code}: #{reason}"
+    # checks peer cert exists, and validates CN
+    # raises OpenSSL::SSL::SSLError
+    @socket.post_connection_check(self.host)
 
-      # close and cleanup socket
-      self.disconnect!
-    end
-
-    yield @driver
-
-    # XXX: might emit :error?
-    fail unless @driver.start
-
-  rescue => exc
-    # cleanup on errors
-    @driver = nil
-
-    # XXX: racy if the driver also emits :close?
-    self.disconnect!
-
-    # XXX: these should be emit :error instead?
-    raise
+    return @socket.peer_cert
   end
 
   # Valid after on :open
   #
   # @return [Integer]
-  def status
+  def http_status
     @driver.status
   end
 
   # Valid after on :open
   #
   # @return [Websocket::Driver::Headers]
-  def headers
+  def http_headers
     @driver.headers
   end
 
+  # Send message frame, either text or binary.
+  #
+  # XXX: threadsafe vs concurrent @driver.parse etc?
+  #
+  # @param message [String, Array<Integer>]
+  # @raise [ArgumentError] invalid type
+  # @raise [RuntimeError] unable to send (socket closed?)
+  def send(message)
+    case message
+    when String
+      fail unless @driver.text(message)
+    when Array
+      fail unless @driver.binary(message)
+    else
+      raise ArgumentError, "Invalid type: #{message.class}"
+    end
+  end
+
   # Send ping. Register optional callback, called from the #read thread.
+  #
+  # XXX: threadsafe vs concurrent @driver.parse etc?
   #
   # @param string [String]
   # @yield [] received pong
@@ -122,41 +151,20 @@ class Kontena::Websocket::Client
     fail unless @driver.ping(string, &cb)
   end
 
-  # @param string [String]
-  # @raise [RuntimeError]
-  def send(string)
-    fail unless @driver.text(string)
-  end
-
-  # @param bytes [Array<Integer>]
-  # @raise [RuntimeError]
-  def send_binary(bytes)
-    fail unless @driver.binary(bytes)
-  end
-
-  # Loop to read and parse websocket frames.
-  # The websocket must be connected.
+  # Send close frame.
   #
-  # XXX: The thread calling this method will also emit all websocket events.
-  def read
-    loop do
-      begin
-        data = @socket.readpartial(FRAME_SIZE)
-      rescue EOFError
-        # XXX: fail @driver?
-        break
-      end
-
-      @driver.parse(data)
-    end
-  end
-
+  # XXX: threadsafe vs concurrent @driver.parse etc?
+  #
+  # Eventually emits on :close, which will disconnect!
   def close
     fail unless @driver.close
   end
 
+protected
+
   # Connect to TCP server.
   #
+  # @raise [SystemCallError]
   # @return [TCPSocket]
   def connect_tcp
     ::TCPSocket.new(self.host, self.port)
@@ -185,29 +193,10 @@ class Kontena::Websocket::Client
     ssl_socket
   end
 
-  # Verify and return SSL cert. Validates even if not ssl_verify.
+  # Create @socket and @connection
   #
-  # @raise [ArgumentError] Not connected
+  # @raise [SystemCallError]
   # @raise [OpenSSL::SSL::SSLError]
-  # @return [nil] not an ssl connection
-  # @return [OpenSSL::X509::Certificate]
-  def ssl_cert!
-    raise ArgumentError, "Not connected" unless @socket
-    return nil unless ssl?
-
-    x509_verify = @socket.verify_result
-
-    unless x509_verify == OpenSSL::X509::V_OK
-      raise OpenSSL::SSL::SSLError, "certificate verify failed: #{X509_VERIFY_ERRORS[x509_verify]}"
-    end
-
-    # checks peer cert exists, and validates CN
-    # raises OpenSSL::SSL::SSLError
-    @socket.post_connection_check(self.host)
-
-    return @socket.peer_cert
-  end
-
   # @return [Connection]
   def connect
     if ssl?
@@ -216,10 +205,82 @@ class Kontena::Websocket::Client
       @socket = self.connect_tcp
     end
 
-    connection = Connection.new(@uri, @socket)
+    @connection = Connection.new(@uri, @socket)
   end
 
-  def disconnect!
+  # Create @driver and send websocket handshake once connected
+  # Yields driver for registering handlers, before starting.
+  #
+  # Allows #read to emit :open later.
+  # XXX:May emit :error?
+  #
+  # @raise [RuntimeError] XXX: already started?
+  # @yield [ws_driver]
+  # @yieldparam ws_driver [Websocket::Driver]
+  def start(&block)
+    @driver = ::WebSocket::Driver.client(@connection)
+
+    @headers.each do |k, v|
+      @driver.set_header(k, v)
+    end
+
+    @driver.on :error do |err|
+      debug "#{url} error: #{err} @\n\t#{caller.join("\n\t")}"
+
+      raise err
+    end
+
+    @driver.on :open do
+      debug "#{url} open @\n\t#{caller.join("\n\t")}"
+    end
+
+    @driver.on :message do |data|
+      debug "#{url} message: #{data.inspect} @\n\t#{caller.join("\n\t")}"
+    end
+
+    @driver.on :close do |code, reason|
+      debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
+
+      # close and cleanup socket
+      self.disconnect
+    end
+
+    yield @driver
+
+    # XXX: might emit :error?
+    fail unless @driver.start
+
+  rescue => exc
+    # cleanup on errors
+    @driver = nil
+
+    # XXX: racy if the driver also emits :close?
+    self.disconnect
+
+    # XXX: these should be emit :error instead?
+    raise
+  end
+
+  # Loop to read and parse websocket frames.
+  # The websocket must be connected.
+  #
+  # The thread calling this method will also emit websocket events.
+  def read_loop
+    loop do
+      begin
+        data = @socket.readpartial(FRAME_SIZE)
+      rescue EOFError
+        # XXX: fail @driver?
+        break
+      end
+
+      @driver.parse(data)
+    end
+  end
+
+  # Clear connection state, close socket.
+  def disconnect
+    @driver = nil
     @connection = nil
 
     @socket.close if @socket
