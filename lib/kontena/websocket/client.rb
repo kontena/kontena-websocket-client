@@ -290,40 +290,71 @@ class Kontena::Websocket::Client
 
     # these are called from read_loop -> with_driver { driver.parse } with the @mutex held
     # do not recurse back into with_driver!
-    driver.on :error do |err|
-      debug "#{url} error: #{err} @\n\t#{caller.join("\n\t")}"
-
-      # this will presumably propagate up out of #recv_loop, not this function
-      raise err
+    driver.on :error do |event|
+      self.on_error(event)
     end
 
-    driver.on :open do
-      debug "#{url} open @\n\t#{caller.join("\n\t")}"
-
-      @open = true
+    driver.on :open do |event|
+      self.on_open(event)
     end
 
     driver.on :message do |event|
-      debug "#{url} message: #{event.data} @\n\t#{caller.join("\n\t")}"
-
-      # XXX: should this be a threadsafe Queue instead?
-      @recv_queue << event.data
+      self.on_message(event)
     end
 
     driver.on :close do |event|
-      debug "#{url} close: code=#{event.code}, reason=#{event.reason} @\n\t#{caller.join("\n\t")}"
-
-      # store for raise from run()
-      @close_error = Kontena::Websocket::CloseError.new(event.code, event.reason)
-
-      # do not wait for server to close
-      self.disconnect
+      self.on_close(event)
     end
 
     # not expected to emit anything, not even :error
     fail unless driver.start
 
     return driver
+  end
+
+  # @param exc [WebSocket::Driver::URIError]
+  def on_error(exc)
+    debug "#{url} error: #{exc} @\n\t#{caller.join("\n\t")}"
+
+    # this will presumably propagate up out of #recv_loop, not this function
+    raise exc
+  end
+
+  # Mark client as opened.
+  # Causes #read_loop to call @open_block.
+  #
+  # @param event [WebSocket::Driver::OpenEvent] no attrs
+  def on_open(event)
+    debug "#{url} open @\n\t#{caller.join("\n\t")}"
+
+    @open = true
+  end
+
+  # Queue up received messages
+  # Causes #read_loop -> #process_messages to dequeue and yield to @listen_block
+  #
+  # @param event [WebSocket::Driver::MessageEvent] data
+  def on_message(event)
+    debug "#{url} message: #{event.data} @\n\t#{caller.join("\n\t")}"
+
+    # XXX: should this be a threadsafe Queue instead?
+    @recv_queue << event.data
+  end
+
+  # Store the @close_error, and disconnect.
+  #
+  # Disconnect will close the socket, allowing #read_loop to return.
+  #
+  # @param event [WebSocket::Driver::CloseEvent] code, reason
+  def on_close(event)
+    debug "#{url} close: code=#{event.code}, reason=#{event.reason} @\n\t#{caller.join("\n\t")}"
+
+    # store for raise from run()
+    @close_error = Kontena::Websocket::CloseError.new(event.code, event.reason)
+
+    # do not wait for server to close
+    # results in EOF for #read_loop, which returns
+    self.disconnect
   end
 
   # Loop to read the socket, parse websocket frames, and call user blocks.

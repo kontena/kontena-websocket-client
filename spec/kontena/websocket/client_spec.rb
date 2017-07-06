@@ -358,12 +358,12 @@ describe Kontena::Websocket::Client do
 
       expect(socket).to receive(:readpartial).with(Integer).and_return('foo')
       expect(driver).to receive(:parse).with('foo') do
-        subject.instance_variable_set('@open', true)
+        subject.on_open double()
       end
 
       expect(socket).to receive(:readpartial).with(Integer).and_return('bar')
       expect(driver).to receive(:parse).with('bar') do
-        subject.instance_variable_get('@recv_queue') << 'data'
+        subject.on_message double(data: 'data')
       end
 
       expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
