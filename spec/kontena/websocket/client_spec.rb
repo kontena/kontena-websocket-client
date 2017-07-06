@@ -344,7 +344,7 @@ describe Kontena::Websocket::Client do
 
       subject.read_loop(socket)
 
-      expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::CloseError, "Connection closed with code 1006: EOF")
+      expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::EOFError, "Connection closed with code 1006: EOF")
     end
 
     it "calls open block once, and then messages" do

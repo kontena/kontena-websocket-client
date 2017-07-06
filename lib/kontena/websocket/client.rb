@@ -367,7 +367,7 @@ class Kontena::Websocket::Client
         debug "EOF"
 
         # if we received on :close, the EOF is expected, and we keep that error
-        @close_error ||= Kontena::Websocket::CloseError.new(CLOSE_ABNORMAL, "EOF")
+        @close_error ||= Kontena::Websocket::EOFError.new
 
         # just return, #run will handle disconnect
         return

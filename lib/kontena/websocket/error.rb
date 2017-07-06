@@ -20,4 +20,10 @@ module Kontena::Websocket
       @code == 1000
     end
   end
+
+  class EOFError < CloseError
+    def initialize
+      super(1006, "EOF")
+    end
+  end
 end
