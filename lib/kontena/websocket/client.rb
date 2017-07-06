@@ -12,15 +12,16 @@ class Kontena::Websocket::Client
   attr_reader :uri
 
   FRAME_SIZE = 4 * 1024
+  X509_VERIFY_ERRORS = OpenSSL::X509.constants.grep(/^V_(ERR_|OK)/).map { |name| [OpenSSL::X509.const_get(name), name] }.to_h
 
   # @param [String] url
   # @param headers [Hash{String => String}]
-  # @param ssl_version [???] 'SSLv23', :TLSv1
+  # @param ssl_version [OpenSSL::SSL::SSLContext::METHODS] :SSLv23, :SSLv3, :TLSv1, :TLSv1_1, :TLSv1_2
   # @param ssl_verify [Boolean] verify peer cert, host
   # @param ssl_ca_file [String] path to CA cert bundle file
   # @param ssl_ca_path [String] path to hashed CA cert directory
   # @raise [ArgumentError] Invalid websocket URI
-  def initialize(url, headers: {}, ssl_version: nil, ssl_verify: nil, ssl_ca_file: nil, ssl_ca_path: nil)
+  def initialize(url, headers: {}, ssl_version: :SSLv23, ssl_verify: nil, ssl_ca_file: nil, ssl_ca_path: nil)
     @uri = URI.parse(url)
     @headers = headers
     @ssl_verify = ssl_verify
@@ -28,7 +29,7 @@ class Kontena::Websocket::Client
       ssl_version: ssl_version,
       ca_file: ssl_ca_file,
       ca_path: ssl_ca_path,
-      verify_mode: ssl_verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSLOpenSSL::SSL::SSL_VERIFY_NONE,
+      verify_mode: ssl_verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE,
     }
 
     unless @uri.scheme == 'ws' || @uri.scheme == 'wss'
@@ -164,20 +165,13 @@ class Kontena::Websocket::Client
   # @return [OpenSSL::SSL::SSLContext]
   def ssl_context
     ssl_context = OpenSSL::SSL::SSLContext.new()
-    ssl_context.set_params(verify_callback: self.ssl_verify_callback, **@ssl_params)
+    ssl_context.set_params(**@ssl_params)
     ssl_context
-  end
-
-  # XXX: necessary when using post_connection_check?
-  #
-  # @param preverify_ok [Boolean] cert valid
-  # @param store_context [OpenSSL::X509::StoreContext]
-  def ssl_verify_callback(preverify_ok, store_context)
-    return preverify_ok
   end
 
   # Connect to TCP server, perform SSL handshake, verify if required.
   #
+  # @raise [OpenSSL::SSL::SSLError]
   # @return [OpenSSL::SSL::SSLSocket]
   def connect_ssl
     tcp_socket = self.connect_tcp
@@ -189,6 +183,29 @@ class Kontena::Websocket::Client
     ssl_socket.connect
     ssl_socket.post_connection_check(self.host) if @ssl_verify
     ssl_socket
+  end
+
+  # Verify and return SSL cert. Validates even if not ssl_verify.
+  #
+  # @raise [ArgumentError] Not connected
+  # @raise [OpenSSL::SSL::SSLError]
+  # @return [nil] not an ssl connection
+  # @return [OpenSSL::X509::Certificate]
+  def ssl_cert!
+    raise ArgumentError, "Not connected" unless @socket
+    return nil unless ssl?
+
+    x509_verify = @socket.verify_result
+
+    unless x509_verify == OpenSSL::X509::V_OK
+      raise OpenSSL::SSL::SSLError, "certificate verify failed: #{X509_VERIFY_ERRORS[x509_verify]}"
+    end
+
+    # checks peer cert exists, and validates CN
+    # raises OpenSSL::SSL::SSLError
+    @socket.post_connection_check(self.host)
+
+    return @socket.peer_cert
   end
 
   # @return [Connection]
