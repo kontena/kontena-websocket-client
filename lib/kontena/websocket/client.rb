@@ -108,7 +108,7 @@ class Kontena::Websocket::Client
   # Valid after on :open
   #
   # @return [Websocket::Driver::Headers]
-  def heaers
+  def headers
     @driver.headers
   end
 
