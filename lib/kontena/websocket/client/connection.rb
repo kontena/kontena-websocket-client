@@ -1,5 +1,7 @@
 # WebSocket::Driver.client(...) API
 class Kontena::Websocket::Client::Connection
+  include Kontena::Websocket::Logging
+
   attr_reader :uri
 
   # @param uri [URI]

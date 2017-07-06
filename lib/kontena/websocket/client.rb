@@ -6,8 +6,7 @@ require 'openssl'
 class Kontena::Websocket::Client
   require_relative './client/connection'
 
-  extend Forwardable
-  include Kontena::Logging
+  include Kontena::Websocket::Logging
 
   attr_reader :uri
 
@@ -35,7 +34,7 @@ class Kontena::Websocket::Client
     }
 
     unless @uri.scheme == 'ws' || @uri.scheme == 'wss'
-      raise ArgumentError, "Invalid websocket URI: #{@uri}"
+      raise ArgumentError, "Invalid websocket URL: #{@uri}"
     end
 
     @mutex = Mutex.new # for @driver
@@ -100,11 +99,11 @@ class Kontena::Websocket::Client
   end
 
   def connected?
-    @socket && @connection && @driver
+    !!@socket && !!@connection && !!@driver
   end
 
   def open?
-    @open
+    !!@open
   end
 
   # @raise [ArgumentError] Not connected
