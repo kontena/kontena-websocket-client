@@ -310,11 +310,11 @@ class Kontena::Websocket::Client
       @recv_queue << event.data
     end
 
-    driver.on :close do |code, reason|
-      debug "#{url} close: code=#{code}, reason=#{reason} @\n\t#{caller.join("\n\t")}"
+    driver.on :close do |event|
+      debug "#{url} close: code=#{event.code}, reason=#{event.reason} @\n\t#{caller.join("\n\t")}"
 
       # store for raise from run()
-      @close_error = Kontena::Websocket::CloseError.new(code, reason)
+      @close_error = Kontena::Websocket::CloseError.new(event.code, event.reason)
 
       # do not wait for server to close
       self.disconnect
@@ -355,9 +355,13 @@ class Kontena::Websocket::Client
       end
 
       # yield any parsed messages
-      while message = @recv_queue.shift
-        @listen_block.call(message)
-      end
+      self.process_messages
+    end
+  end
+
+  def process_messages
+    while message = @recv_queue.shift
+      @listen_block.call(message)
     end
   end
 

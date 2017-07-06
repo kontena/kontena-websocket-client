@@ -248,6 +248,86 @@ describe Kontena::Websocket::Client do
     end
   end
 
+  describe '#start' do
+    let(:socket) { instance_double(TCPSocket) }
+    let(:connection) { instance_double(Kontena::Websocket::Client::Connection) }
+    let(:driver) { instance_double(WebSocket::Driver::Client) }
+
+    before do
+      subject.instance_variable_set('@socket', socket)
+      subject.instance_variable_set('@connection', connection)
+
+      allow(connection).to receive(:url).and_return(subject.url)
+      allow(connection).to receive(:write)
+    end
+
+    it "registers callbacks and starts the handshake" do
+      expect(WebSocket::Driver).to receive(:client).with(connection).and_return(driver)
+
+      expect(driver).to receive(:on).with(:error)
+      expect(driver).to receive(:on).with(:open)
+      expect(driver).to receive(:on).with(:message)
+      expect(driver).to receive(:on).with(:close)
+      expect(driver).to receive(:start).and_return(true)
+
+      expect(subject.start).to eq driver
+    end
+
+    it "registers an error callback that raises" do
+      driver = subject.start
+
+      expect{driver.emit(:error, RuntimeError.new('test'))}.to raise_error(RuntimeError, 'test')
+    end
+
+    it "registers an open callback that sets @open" do
+      driver = subject.start
+
+      expect{
+        driver.emit(:open, double())
+      }.to change{subject.open?}.from(false).to(true)
+    end
+
+    it "registers a message callback that pushes to @receive_queue" do
+      driver = subject.start
+
+      message = nil
+      subject.listen do |m|
+        message = m
+      end
+
+      expect{
+        driver.emit(:message, double(data: 'test'))
+        subject.process_messages
+      }.to change{message}.from(nil).to('test')
+    end
+
+    it "registers an close callback that disconnects" do
+      driver = subject.start
+
+      subject.instance_variable_set('@driver', driver)
+
+      expect(socket).to receive(:close)
+
+      expect{
+        driver.emit(:close, double(code: 1337, reason: "test"))
+      }.to change{subject.connected?}.from(true).to(false)
+
+      expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::CloseError, "Connection closed with code 1337: test")
+    end
+
+    it "fails if driver start does" do
+      expect(WebSocket::Driver).to receive(:client).with(connection).and_return(driver)
+
+      expect(driver).to receive(:on).with(:error)
+      expect(driver).to receive(:on).with(:open)
+      expect(driver).to receive(:on).with(:message)
+      expect(driver).to receive(:on).with(:close)
+      expect(driver).to receive(:start).and_return(false)
+
+      expect{subject.start}.to raise_error(RuntimeError)
+    end
+  end
+
   context 'for a ws:// url' do
     let(:url) { 'ws://socket.example.com/'}
     subject { described_class.new(url) }
