@@ -328,7 +328,7 @@ class Kontena::Websocket::Client
 
   # Loop to read the socket, parse websocket frames, and call user blocks.
   # The websocket must be connected.
-  def read_loop(socket, &block)
+  def read_loop(socket)
     loop do
       begin
         data = socket.readpartial(FRAME_SIZE)

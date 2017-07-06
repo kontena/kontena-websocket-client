@@ -328,6 +328,53 @@ describe Kontena::Websocket::Client do
     end
   end
 
+  describe '#read_loop' do
+    let(:socket) { instance_double(TCPSocket) }
+    let(:driver) { instance_double(WebSocket::Driver::Client) }
+
+    before do
+      allow(subject).to receive(:with_driver).and_yield(driver)
+    end
+
+    it "reads socket and passes it to locked driver for parsing until EOF" do
+      expect(socket).to receive(:readpartial).with(Integer).and_return('asdf')
+      expect(driver).to receive(:parse).with('asdf')
+
+      expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
+
+      subject.read_loop(socket)
+
+      expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::CloseError, "Connection closed with code 1006: EOF")
+    end
+
+    it "calls open block once, and then messages" do
+      opened = messages = 0
+      subject.instance_variable_set('@open_block', Proc.new do
+        opened += 1
+      end)
+      subject.listen do |message|
+        messages += 1
+      end
+
+      expect(socket).to receive(:readpartial).with(Integer).and_return('foo')
+      expect(driver).to receive(:parse).with('foo') do
+        subject.instance_variable_set('@open', true)
+      end
+
+      expect(socket).to receive(:readpartial).with(Integer).and_return('bar')
+      expect(driver).to receive(:parse).with('bar') do
+        subject.instance_variable_get('@recv_queue') << 'data'
+      end
+
+      expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
+
+      subject.read_loop(socket)
+
+      expect(opened).to eq 1
+      expect(messages).to eq 1
+    end
+  end
+
   context 'for a ws:// url' do
     let(:url) { 'ws://socket.example.com/'}
     subject { described_class.new(url) }
