@@ -276,14 +276,11 @@ protected
     @connection = Connection.new(@uri, @socket)
   end
 
-  # Create @driver and send websocket handshake once connected
-  # Yields driver for registering handlers, before starting.
-  #
-  # Allows #read_loop to emit :open later.
+  # Create @driver and send websocket handshake
+  # Must be connected.
+  # Registers driver handlers to set @open, @recv_queue, @close state or raise errors
   #
   # @raise [RuntimeError] XXX: already started?
-  # @yield [ws_driver]
-  # @yieldparam ws_driver [Websocket::Driver]
   def start
     @driver = ::WebSocket::Driver.client(@connection)
 
@@ -292,9 +289,12 @@ protected
         driver.set_header(k, v)
       end
 
+      # these are called from read_loop -> with_driver { driver.parse } with the @mutex held
+      # do not recurse back into with_driver!
       driver.on :error do |err|
         debug "#{url} error: #{err} @\n\t#{caller.join("\n\t")}"
 
+        # this will presumably propagate up out of #recv_loop, not this function
         raise err
       end
 
@@ -307,6 +307,7 @@ protected
       driver.on :message do |event|
         debug "#{url} message: #{event.data} @\n\t#{caller.join("\n\t")}"
 
+        # XXX: should this be a threadsafe Queue instead?
         @recv_queue << event.data
       end
 
@@ -320,15 +321,13 @@ protected
         self.disconnect
       end
 
-      # should not emit anything, not even :error
+      # not expected to emit anything, not even :error
       fail unless driver.start
     end
   end
 
-  # Loop to read and parse websocket frames.
+  # Loop to read the socket, parse websocket frames, and call user blocks.
   # The websocket must be connected.
-  #
-  # The thread calling this method will also emit websocket events.
   def read_loop(socket, &block)
     loop do
       begin
@@ -336,23 +335,26 @@ protected
       rescue EOFError
         debug "EOF"
 
-        # do not clobber any earlier close error that we received
+        # if we received on :close, the EOF is expected, and we keep that error
         @close_error ||= Kontena::Websocket::CloseError.new(CLOSE_ABNORMAL, "EOF")
 
         # just return, #run will handle disconnect
-        break
+        return
       end
 
       with_driver do |driver|
+        # call into the driver, causing it to emit the events registered in #start
         driver.parse(data)
       end
 
+      # call user callbacks with the mutex released, so that they are free to call back into send()
       if @open && @open_block
         # only called once
         @open_block.call()
         @open_block = nil
       end
 
+      # yield any parsed messages
       while message = @recv_queue.shift
         @listen_block.call(message)
       end
