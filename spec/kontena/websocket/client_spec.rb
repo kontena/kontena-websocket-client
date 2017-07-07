@@ -231,11 +231,11 @@ describe Kontena::Websocket::Client do
         expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, "certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT")
       end
 
-      it "returns post_connection_check" do
+      it "fails if post_connection_check" do
         expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_OK)
         expect(socket).to receive(:post_connection_check).and_raise(OpenSSL::SSL::SSLError, 'hostname "192.168.66.1" does not match the server certificate')
 
-        expect{subject.ssl_cert!}.to raise_error(OpenSSL::SSL::SSLError, 'hostname "192.168.66.1" does not match the server certificate')
+        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'hostname "192.168.66.1" does not match the server certificate')
       end
 
       it "returns the peer cert if valid" do

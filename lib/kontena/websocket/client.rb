@@ -119,7 +119,7 @@ class Kontena::Websocket::Client
   # Verify and return SSL cert. Validates even if not ssl_verify.
   #
   # @raise [RuntimeError] not connected
-  # @raise [OpenSSL::SSL::SSLError]
+  # @raise [Kontena::Websocket::SSLVerifyError]
   # @return [nil] not an ssl connection
   # @return [OpenSSL::X509::Certificate]
   def ssl_cert!
@@ -129,12 +129,15 @@ class Kontena::Websocket::Client
     x509_verify_result = @socket.verify_result
 
     unless x509_verify_result == OpenSSL::X509::V_OK
-      raise Kontena::Websocket::SSLVerifyError.new(x509_verify_result)
+      raise Kontena::Websocket::SSLVerifyError.from_verify_result(x509_verify_result)
     end
 
-    # checks peer cert exists, and validates CN
-    # raises OpenSSL::SSL::SSLError
-    @socket.post_connection_check(self.host)
+    begin
+      # checks peer cert exists, and validates CN
+      @socket.post_connection_check(self.host)
+    rescue OpenSSL::SSL::SSLError => exc
+      raise Kontena::Websocket::SSLVerifyError.new(exc.message)
+    end
 
     return @socket.peer_cert
   end
@@ -247,6 +250,7 @@ class Kontena::Websocket::Client
   # Connect to TCP server, perform SSL handshake, verify if required.
   #
   # @raise [OpenSSL::SSL::SSLError]
+  # @raise [Kontena::Websocket::SSLVerifyError]
   # @return [OpenSSL::SSL::SSLSocket]
   def connect_ssl
     tcp_socket = self.connect_tcp
@@ -255,16 +259,24 @@ class Kontena::Websocket::Client
     ssl_socket = OpenSSL::SSL::SSLSocket.new(tcp_socket, ssl_context)
     ssl_socket.sync_close = true # XXX: also close TCPSocket
     ssl_socket.hostname = self.host # SNI
-    ssl_socket.connect
-    ssl_socket.post_connection_check(self.host) if @ssl_verify # XXX: should raise SSLVerifyError
-    ssl_socket
 
-  rescue OpenSSL::SSL::SSLError => exc
-    if exc.message.end_with? 'state=error: certificate verify failed'
-      raise Kontena::Websocket::SSLVerifyError.new(ssl_socket.verify_result)
-    else
-      raise
+    begin
+      ssl_socket.connect
+    rescue OpenSSL::SSL::SSLError => exc
+      if exc.message.end_with? 'certificate verify failed'
+        raise Kontena::Websocket::SSLVerifyError.from_verify_result(ssl_socket.verify_result)
+      else
+        raise # TODO: Kontena::Websocket::SSLError
+      end
     end
+
+    begin
+      ssl_socket.post_connection_check(self.host) if @ssl_verify # XXX: should raise SSLVerifyError
+    rescue OpenSSL::SSL::SSLError => exc
+      raise Kontena::Websocket::SSLVerifyError.new(exc.message)
+    end
+
+    ssl_socket
   end
 
   # Create @socket and @connection
