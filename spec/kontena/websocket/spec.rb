@@ -188,6 +188,21 @@ describe Kontena::Websocket::Client do
             subject.run
           }.to raise_error(WebSocket::Driver::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
         end
+
+        context 'with the wrong hostname' do
+          subject {
+            described_class.new("wss://127.0.0.1:#{port}",
+              ssl_verify: true,
+              ssl_ca_file: cert_file.path,
+            )
+          }
+
+          it 'raises a SSL verify error about a self-signed cert' do
+            expect{
+              subject.run
+            }.to raise_error(OpenSSL::SSL::SSLError, 'hostname "127.0.0.1" does not match the server certificate')
+          end
+        end
       end
     end
   end

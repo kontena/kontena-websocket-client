@@ -256,7 +256,7 @@ class Kontena::Websocket::Client
     ssl_socket.sync_close = true # XXX: also close TCPSocket
     ssl_socket.hostname = self.host # SNI
     ssl_socket.connect
-    ssl_socket.post_connection_check(self.host) if @ssl_verify
+    ssl_socket.post_connection_check(self.host) if @ssl_verify # XXX: should raise SSLVerifyError
     ssl_socket
 
   rescue OpenSSL::SSL::SSLError => exc
