@@ -205,5 +205,81 @@ describe Kontena::Websocket::Client do
         end
       end
     end
+
+    context 'that is a websocket server' do
+      let(:server_thread) do
+        Thread.new do
+          loop do
+            begin
+              socket = tcp_server.accept
+
+              driver = WebSocket::Driver.server(socket)
+              driver.on :connect do |event|
+                if WebSocket::Driver.websocket? driver.env
+                  logger.info("websocket server connect: #{event}")
+                  driver.start
+                else
+                  socket.write([
+                    "HTTP/1.1 501 Not Implemented",
+                    "Server: test",
+                    "Connection: close",
+                    "",
+                    "",
+                  ].join("\r\n"))
+                  socket.close
+                end
+              end
+
+              # echo
+              driver.on :open do |event|
+                logger.info("websocket server open: #{event}")
+              end
+              driver.on :error do |event|
+                logger.info("websocket server error: #{event}")
+                raise event
+              end
+              driver.on :message do |event|
+                logger.info("websocket server message: #{event}")
+                driver.text(event.data)
+              end
+              driver.on :close do |event|
+                logger.info("websocket server close: #{event}")
+                socket.close
+              end
+
+              loop do
+                data = socket.readpartial(1024)
+                driver.parse(data)
+              end
+            rescue => exc
+              logger.warn exc
+            end
+          end
+        end
+      end
+
+      it 'is able to connect, exchange messages and close the connection' do
+        opened = 0
+        messages = []
+
+        expect{
+          subject.listen do |message|
+            messages << message
+          end
+
+          subject.run do
+            logger.info("websocket client open")
+            opened += 1
+
+            subject.send('Hello World!')
+
+            subject.close
+          end
+        }.to_not raise_error
+
+        expect(opened).to eq 1
+        expect(messages).to eq ['Hello World!']
+      end
+    end
   end
 end
