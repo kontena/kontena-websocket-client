@@ -228,7 +228,7 @@ describe Kontena::Websocket::Client do
       it "fails on verify result" do
         expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
 
-        expect{subject.ssl_cert!}.to raise_error(OpenSSL::SSL::SSLError, "certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT")
+        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, "certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT")
       end
 
       it "returns post_connection_check" do
