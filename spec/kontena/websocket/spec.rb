@@ -1,3 +1,4 @@
+require 'tempfile'
 require 'kontena-websocket-client'
 
 describe Kontena::Websocket::Client do
@@ -155,6 +156,37 @@ describe Kontena::Websocket::Client do
           expect{
             subject.run
           }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT')
+        end
+      end
+
+      context "with the cert configured as a CA cert" do
+        let(:cert_file) do
+          cert_file = Tempfile.new('kontena-websocket-ssl-cert')
+          cert_file.print ssl_cert.to_pem
+          cert_file.close
+          cert_file
+        end
+
+        subject {
+          described_class.new("wss://localhost:#{port}",
+            ssl_verify: true,
+            ssl_ca_file: cert_file.path,
+          )
+        }
+
+        before do
+          cert_file
+          subject
+        end
+
+        after do
+          cert_file.unlink
+        end
+
+        it 'is able to connect' do
+          expect{
+            subject.run
+          }.to raise_error(WebSocket::Driver::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
         end
       end
     end
