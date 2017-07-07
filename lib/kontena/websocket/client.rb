@@ -55,6 +55,12 @@ class Kontena::Websocket::Client
     @uri.scheme == 'wss'
   end
 
+  # Connecting with SSL cert/host verification?
+  # @return [Boolean]
+  def ssl_verify?
+    !!@ssl_verify
+  end
+
   def host
     @uri.host
   end

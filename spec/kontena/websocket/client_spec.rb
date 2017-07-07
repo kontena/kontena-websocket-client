@@ -19,6 +19,7 @@ describe Kontena::Websocket::Client do
       expect(subject.url).to eq 'ws://socket.example.com'
       expect(subject.scheme).to eq 'ws'
       expect(subject.ssl?).to be false
+      expect(subject.ssl_verify?).to be false
       expect(subject.host).to eq 'socket.example.com'
       expect(subject.port).to eq 80
     end
@@ -29,6 +30,7 @@ describe Kontena::Websocket::Client do
       expect(subject.url).to eq 'wss://socket.example.com'
       expect(subject.scheme).to eq 'wss'
       expect(subject.ssl?).to be true
+      expect(subject.ssl_verify?).to be false
       expect(subject.host).to eq 'socket.example.com'
       expect(subject.port).to eq 443
     end
@@ -39,6 +41,7 @@ describe Kontena::Websocket::Client do
       expect(subject.url).to eq 'ws://socket.example.com:9292'
       expect(subject.scheme).to eq 'ws'
       expect(subject.ssl?).to be false
+      expect(subject.ssl_verify?).to be false
       expect(subject.host).to eq 'socket.example.com'
       expect(subject.port).to eq 9292
     end
@@ -461,6 +464,13 @@ describe Kontena::Websocket::Client do
 
     before do
       allow(subject).to receive(:connect_tcp).and_return(tcp_socket)
+    end
+
+    it 'is ssl?' do
+      expect(subject.ssl?).to be true
+    end
+    it 'is ssl_verify?' do
+      expect(subject.ssl_verify?).to be true
     end
 
     describe '#ssl_context' do
