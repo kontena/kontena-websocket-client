@@ -175,13 +175,13 @@ describe Kontena::Websocket::Client do
 
     describe '#close' do
       it "closes with defaults" do
-        expect(driver).to receive(:close).with(1000, nil).and_return(true)
+        expect(driver).to receive(:close).with(nil, 1000).and_return(true)
 
         subject.close
       end
 
       it "closes with code and reason" do
-        expect(driver).to receive(:close).with(4020, "nope").and_return(true)
+        expect(driver).to receive(:close).with("nope", 4020).and_return(true)
 
         subject.close(4020, "nope")
       end

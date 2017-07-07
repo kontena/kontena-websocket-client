@@ -210,7 +210,7 @@ class Kontena::Websocket::Client
     debug "close"
 
     with_driver do |driver|
-      fail unless driver.close(code, reason)
+      fail unless driver.close(reason, code) # swapped argument order
     end
   end
 
