@@ -20,7 +20,7 @@ describe Kontena::Websocket::Client do
     end
   end
 
-  context "For a local server" do
+  context "For a local server on a random port" do
     let(:tcp_server) do
       TCPServer.new('127.0.0.1', 0)
     end
@@ -84,7 +84,7 @@ describe Kontena::Websocket::Client do
 
     context "with an random SSL cert" do
       let(:ssl_cn) do
-        'test'
+        'localhost'
       end
       let(:ssl_subject) do
         OpenSSL::X509::Name.parse "/CN=#{ssl_cn}"
@@ -102,7 +102,7 @@ describe Kontena::Websocket::Client do
         cert.issuer = cert.subject # self-signe
         cert.public_key = key.public_key
         cert.not_before = Time.now - 60.0
-        cert.not_after = cert.not_before + 60.0 # +/- 1 minute validity
+        cert.not_after = Time.now + 60.0 # +/- 1 minute validity
 
         ef = OpenSSL::X509::ExtensionFactory.new
         ef.subject_certificate = cert
@@ -129,6 +129,13 @@ describe Kontena::Websocket::Client do
             begin
               client = ssl_server.accept
               client.readpartial(1024)
+              client.write([
+                "HTTP/1.1 501 Not Implemented",
+                "Server: test",
+                "Connection: close",
+                "",
+                "",
+              ].join("\r\n"))
               client.close
             rescue => exc
               logger.warn exc
@@ -138,12 +145,16 @@ describe Kontena::Websocket::Client do
       end
 
       context "with ssl verify" do
-        subject { described_class.new("wss://127.0.0.1:#{port}", ssl_verify: true) }
+        subject {
+          described_class.new("wss://localhost:#{port}",
+            ssl_verify: true,
+          )
+        }
 
-        it 'raises a SSL error' do
+        it 'raises a SSL verify error about a self-signed cert' do
           expect{
             subject.run
-          }.to raise_error(OpenSSL::SSL::SSLError, 'SSL_connect returned=1 errno=0 state=error: certificate verify failed')
+          }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT')
         end
       end
     end

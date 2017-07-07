@@ -1,3 +1,5 @@
+require 'openssl'
+
 module Kontena::Websocket
   class Error < StandardError
 
@@ -5,6 +7,20 @@ module Kontena::Websocket
 
   class ConnectError < Error
 
+  end
+
+  class SSLError < ConnectError
+
+  end
+
+  class SSLVerifyError < SSLError
+    X509_VERIFY_RESULTS = OpenSSL::X509.constants.grep(/^V_(ERR_|OK)/).map { |name| [OpenSSL::X509.const_get(name), name] }.to_h
+
+    # @param verify_result [Integer] @see OpenSSL::SSL::SSLSocket#verify_result
+    def initialize(verify_result)
+      super("certificate verify failed: #{X509_VERIFY_RESULTS[verify_result]}")
+      @verify_result = verify_result
+    end
   end
 
   class CloseError < Error

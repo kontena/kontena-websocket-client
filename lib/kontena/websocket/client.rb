@@ -11,7 +11,6 @@ class Kontena::Websocket::Client
   attr_reader :uri
 
   FRAME_SIZE = 4 * 1024
-  X509_VERIFY_ERRORS = OpenSSL::X509.constants.grep(/^V_(ERR_|OK)/).map { |name| [OpenSSL::X509.const_get(name), name] }.to_h
   CLOSE_NORMAL = 1000
   CLOSE_ABNORMAL = 1006
 
@@ -127,10 +126,10 @@ class Kontena::Websocket::Client
     fail "not connected" unless @socket
     return nil unless ssl?
 
-    x509_verify = @socket.verify_result
+    x509_verify_result = @socket.verify_result
 
-    unless x509_verify == OpenSSL::X509::V_OK
-      raise OpenSSL::SSL::SSLError, "certificate verify failed: #{X509_VERIFY_ERRORS[x509_verify]}"
+    unless x509_verify_result == OpenSSL::X509::V_OK
+      raise Kontena::Websocket::SSLVerifyError.new(x509_verify_result)
     end
 
     # checks peer cert exists, and validates CN
@@ -259,6 +258,13 @@ class Kontena::Websocket::Client
     ssl_socket.connect
     ssl_socket.post_connection_check(self.host) if @ssl_verify
     ssl_socket
+
+  rescue OpenSSL::SSL::SSLError => exc
+    if exc.message.end_with? 'state=error: certificate verify failed'
+      raise Kontena::Websocket::SSLVerifyError.new(ssl_socket.verify_result)
+    else
+      raise
+    end
   end
 
   # Create @socket and @connection
