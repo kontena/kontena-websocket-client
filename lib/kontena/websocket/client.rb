@@ -369,13 +369,23 @@ class Kontena::Websocket::Client
     loop do
       begin
         data = socket.readpartial(FRAME_SIZE)
+
       rescue EOFError
-        debug "EOF"
+        debug "read EOF"
 
         # if we received on :close, the EOF is expected, and we keep that error
         @close_error ||= Kontena::Websocket::EOFError.new
 
         # just return, #run will handle disconnect
+        return
+
+      rescue IOError => exc
+        debug "read IOError: #{exc}"
+
+        # XXX: what is @close_error? What if this is a timeout?
+        @close_error ||= Kontena::Websocket::CloseError.new(1006, exc.message)
+
+        # on_close -> disconnect -> socket.close => IOError: closed stream
         return
       end
 
