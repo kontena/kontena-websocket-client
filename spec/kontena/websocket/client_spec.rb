@@ -64,6 +64,134 @@ describe Kontena::Websocket::Client do
     end
   end
 
+  context "with a connection" do
+    let(:socket) { instance_double(TCPSocket) }
+    let(:connection) { instance_double(Kontena::Websocket::Client::Connection) }
+
+    before do
+      subject.instance_variable_set('@socket', socket)
+      subject.instance_variable_set('@connection', connection)
+    end
+
+    describe '#start' do
+      let(:driver) { instance_double(WebSocket::Driver::Client) }
+
+      it "registers callbacks and starts the handshake" do
+        expect(WebSocket::Driver).to receive(:client).with(connection).and_return(driver)
+
+        expect(driver).to receive(:on).with(:error)
+        expect(driver).to receive(:on).with(:open)
+        expect(driver).to receive(:on).with(:message)
+        expect(driver).to receive(:on).with(:close)
+        expect(driver).to receive(:start).and_return(true)
+
+        expect(subject.start).to eq driver
+      end
+
+      it "fails if driver start does" do
+        expect(WebSocket::Driver).to receive(:client).with(connection).and_return(driver)
+
+        expect(driver).to receive(:on).with(:error)
+        expect(driver).to receive(:on).with(:open)
+        expect(driver).to receive(:on).with(:message)
+        expect(driver).to receive(:on).with(:close)
+        expect(driver).to receive(:start).and_return(false)
+
+        expect{subject.start}.to raise_error(RuntimeError)
+      end
+    end
+
+    # XXX: not an unit test, depends on the actual WebSocket::Driver implementation
+    context 'with a real driver' do
+      before do
+        allow(connection).to receive(:url).and_return(subject.url)
+        allow(connection).to receive(:write)
+
+        driver = subject.start
+
+        subject.instance_variable_set('@driver', driver)
+      end
+
+      let(:driver) do
+        subject.instance_variable_get('@driver')
+      end
+
+      it "registers an error callback that raises" do
+        expect{driver.emit(:error, RuntimeError.new('test'))}.to raise_error(RuntimeError, 'test')
+      end
+
+      it "registers an open callback that sets @open" do
+        expect{
+          driver.emit(:open, double())
+        }.to change{subject.open?}.from(false).to(true)
+      end
+
+      it "registers a message callback that pushes to @queue" do
+        message = nil
+        subject.listen do |m|
+          message = m
+        end
+
+        expect{
+          driver.emit(:message, double(data: 'test'))
+          subject.process_queue
+        }.to change{message}.from(nil).to('test')
+      end
+
+      it "registers an close callback that disconnects" do
+        expect(socket).to receive(:close)
+
+        expect{
+          driver.emit(:close, double(code: 1337, reason: "test"))
+        }.to change{subject.connected?}.from(true).to(false)
+
+        expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::CloseError, "Connection closed with code 1337: test")
+      end
+    end
+  end
+
+  context 'with an SSL connection' do
+    subject { described_class.new('wss://socket.example.com') }
+
+    let(:socket) { instance_double(OpenSSL::SSL::SSLSocket) }
+    let(:cert) { instance_double(OpenSSL::X509::Certificate) }
+
+    before do
+      subject.instance_variable_set('@socket', socket)
+    end
+
+    describe '#ssl_cert' do
+      it "returns the peer cert" do
+        expect(socket).to receive(:peer_cert).and_return(cert)
+
+        expect(subject.ssl_cert).to eq cert
+      end
+    end
+
+    describe '#ssl_cert!' do
+      it "fails on verify result" do
+        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
+
+        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, "certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT")
+      end
+
+      it "fails if post_connection_check" do
+        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_OK)
+        expect(socket).to receive(:post_connection_check).and_raise(OpenSSL::SSL::SSLError, 'hostname "192.168.66.1" does not match the server certificate')
+
+        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'hostname "192.168.66.1" does not match the server certificate')
+      end
+
+      it "returns the peer cert if valid" do
+        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_OK)
+        expect(socket).to receive(:post_connection_check).with('socket.example.com')
+        expect(socket).to receive(:peer_cert).and_return(cert)
+
+        expect(subject.ssl_cert!).to eq cert
+      end
+    end
+  end
+
   context "with a connected driver" do
     let(:socket) { instance_double(TCPSocket) }
     let(:connection) { instance_double(Kontena::Websocket::Client) }
@@ -196,6 +324,46 @@ describe Kontena::Websocket::Client do
       end
     end
 
+    describe '#read_loop' do
+      it "reads socket and passes it to locked driver for parsing until EOF" do
+        expect(socket).to receive(:readpartial).with(Integer).and_return('asdf')
+        expect(driver).to receive(:parse).with('asdf')
+
+        expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
+
+        subject.read_loop(socket)
+
+        expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::EOFError, "Connection closed with code 1006: EOF")
+      end
+
+      it "calls open block once, and then messages" do
+        opened = messages = 0
+        subject.instance_variable_set('@open_block', Proc.new do
+          opened += 1
+        end)
+        subject.listen do |message|
+          messages += 1
+        end
+
+        expect(socket).to receive(:readpartial).with(Integer).and_return('foo')
+        expect(driver).to receive(:parse).with('foo') do
+          subject.on_open double()
+        end
+
+        expect(socket).to receive(:readpartial).with(Integer).and_return('bar')
+        expect(driver).to receive(:parse).with('bar') do
+          subject.on_message double(data: 'data')
+        end
+
+        expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
+
+        subject.read_loop(socket)
+
+        expect(opened).to eq 1
+        expect(messages).to eq 1
+      end
+    end
+
     describe '#disconnect' do
       it "closes the socket and resets the state" do
         expect(subject).to be_connected
@@ -206,175 +374,6 @@ describe Kontena::Websocket::Client do
 
         expect(subject).to_not be_connected
       end
-    end
-  end
-
-  context 'with an SSL connection' do
-    subject { described_class.new('wss://socket.example.com') }
-
-    let(:socket) { instance_double(OpenSSL::SSL::SSLSocket) }
-    let(:cert) { instance_double(OpenSSL::X509::Certificate) }
-
-    before do
-      subject.instance_variable_set('@socket', socket)
-    end
-
-    describe '#ssl_cert' do
-      it "returns the peer cert" do
-        expect(socket).to receive(:peer_cert).and_return(cert)
-
-        expect(subject.ssl_cert).to eq cert
-      end
-    end
-
-    describe '#ssl_cert!' do
-      it "fails on verify result" do
-        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
-
-        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, "certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT")
-      end
-
-      it "fails if post_connection_check" do
-        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_OK)
-        expect(socket).to receive(:post_connection_check).and_raise(OpenSSL::SSL::SSLError, 'hostname "192.168.66.1" does not match the server certificate')
-
-        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'hostname "192.168.66.1" does not match the server certificate')
-      end
-
-      it "returns the peer cert if valid" do
-        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_OK)
-        expect(socket).to receive(:post_connection_check).with('socket.example.com')
-        expect(socket).to receive(:peer_cert).and_return(cert)
-
-        expect(subject.ssl_cert!).to eq cert
-      end
-    end
-  end
-
-  describe '#start' do
-    let(:socket) { instance_double(TCPSocket) }
-    let(:connection) { instance_double(Kontena::Websocket::Client::Connection) }
-    let(:driver) { instance_double(WebSocket::Driver::Client) }
-
-    before do
-      subject.instance_variable_set('@socket', socket)
-      subject.instance_variable_set('@connection', connection)
-
-      allow(connection).to receive(:url).and_return(subject.url)
-      allow(connection).to receive(:write)
-    end
-
-    it "registers callbacks and starts the handshake" do
-      expect(WebSocket::Driver).to receive(:client).with(connection).and_return(driver)
-
-      expect(driver).to receive(:on).with(:error)
-      expect(driver).to receive(:on).with(:open)
-      expect(driver).to receive(:on).with(:message)
-      expect(driver).to receive(:on).with(:close)
-      expect(driver).to receive(:start).and_return(true)
-
-      expect(subject.start).to eq driver
-    end
-
-    it "registers an error callback that raises" do
-      driver = subject.start
-
-      expect{driver.emit(:error, RuntimeError.new('test'))}.to raise_error(RuntimeError, 'test')
-    end
-
-    it "registers an open callback that sets @open" do
-      driver = subject.start
-
-      expect{
-        driver.emit(:open, double())
-      }.to change{subject.open?}.from(false).to(true)
-    end
-
-    it "registers a message callback that pushes to @queue" do
-      driver = subject.start
-
-      message = nil
-      subject.listen do |m|
-        message = m
-      end
-
-      expect{
-        driver.emit(:message, double(data: 'test'))
-        subject.process_queue
-      }.to change{message}.from(nil).to('test')
-    end
-
-    it "registers an close callback that disconnects" do
-      driver = subject.start
-
-      subject.instance_variable_set('@driver', driver)
-
-      expect(socket).to receive(:close)
-
-      expect{
-        driver.emit(:close, double(code: 1337, reason: "test"))
-      }.to change{subject.connected?}.from(true).to(false)
-
-      expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::CloseError, "Connection closed with code 1337: test")
-    end
-
-    it "fails if driver start does" do
-      expect(WebSocket::Driver).to receive(:client).with(connection).and_return(driver)
-
-      expect(driver).to receive(:on).with(:error)
-      expect(driver).to receive(:on).with(:open)
-      expect(driver).to receive(:on).with(:message)
-      expect(driver).to receive(:on).with(:close)
-      expect(driver).to receive(:start).and_return(false)
-
-      expect{subject.start}.to raise_error(RuntimeError)
-    end
-  end
-
-  describe '#read_loop' do
-    let(:socket) { instance_double(TCPSocket) }
-    let(:driver) { instance_double(WebSocket::Driver::Client) }
-
-    before do
-      allow(subject).to receive(:with_driver).and_yield(driver)
-    end
-
-    it "reads socket and passes it to locked driver for parsing until EOF" do
-      expect(socket).to receive(:readpartial).with(Integer).and_return('asdf')
-      expect(driver).to receive(:parse).with('asdf')
-
-      expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
-
-      subject.read_loop(socket)
-
-      expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::EOFError, "Connection closed with code 1006: EOF")
-    end
-
-    it "calls open block once, and then messages" do
-      opened = messages = 0
-      subject.instance_variable_set('@open_block', Proc.new do
-        opened += 1
-      end)
-      subject.listen do |message|
-        messages += 1
-      end
-
-      expect(socket).to receive(:readpartial).with(Integer).and_return('foo')
-      expect(driver).to receive(:parse).with('foo') do
-        subject.on_open double()
-      end
-
-      expect(socket).to receive(:readpartial).with(Integer).and_return('bar')
-      expect(driver).to receive(:parse).with('bar') do
-        subject.on_message double(data: 'data')
-      end
-
-      expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
-
-      subject.read_loop(socket)
-
-      expect(opened).to eq 1
-      expect(messages).to eq 1
     end
   end
 
