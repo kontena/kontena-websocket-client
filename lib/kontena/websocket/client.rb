@@ -347,7 +347,7 @@ class Kontena::Websocket::Client
     ssl_socket
   end
 
-  # Create @socket and @connection
+  # Create @socket and return connection wrapper.
   #
   # @raise [Kontena::Websocket::ConnectError]
   # @return [Connection]
@@ -361,11 +361,12 @@ class Kontena::Websocket::Client
     return Connection.new(@uri, @socket)
   end
 
-  # Create @driver and send websocket handshake
+  # Create websocket driver using @connection, and send websocket handshake
   # Must be connected.
   # Registers driver handlers to set @open, @closed states, enqueue messages, or raise errors.
   #
   # @raise [RuntimeError] already started?
+  # @return [WebSocket::Driver::Client]
   def start
     driver = ::WebSocket::Driver.client(@connection)
 
@@ -433,6 +434,8 @@ class Kontena::Websocket::Client
 
   # Read from socket, and parse websocket frames, enqueue blocks.
   # The websocket must be connected.
+  #
+  # @raise [Kontena::Websocket::SocketError]
   def read
     begin
       data = @socket.readpartial(FRAME_SIZE)
