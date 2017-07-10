@@ -258,7 +258,13 @@ describe Kontena::Websocket::Client do
               end
               driver.on :message do |event|
                 logger.info("websocket server message: #{event}")
-                driver.text(event.data)
+
+                case event.data
+                when 'close'
+                  driver.close('test', 4000)
+                else
+                  driver.text(event.data)
+                end
               end
               driver.on :close do |event|
                 logger.info("websocket server close: #{event}")
@@ -297,6 +303,14 @@ describe Kontena::Websocket::Client do
 
         expect(opened).to eq 1
         expect(messages).to eq ['Hello World!']
+      end
+
+      it 'sees CloseError from server' do
+        expect{
+          subject.run do
+            subject.send('close')
+          end
+        }.to raise_error(Kontena::Websocket::CloseError, 'Connection closed with code 4000: test')
       end
     end
   end
