@@ -3,6 +3,9 @@ require 'forwardable'
 require 'socket'
 require 'openssl'
 
+# Threadsafe: while the #run method is reading/parsing incoming websocket frames, the #send/#ping/#close methods
+# can be called by other threads. The #listen and #ping blocks will be called from the #run thread.
+#
 class Kontena::Websocket::Client
   require_relative './client/connection'
 
@@ -180,8 +183,6 @@ class Kontena::Websocket::Client
 
   # Send message frame, either text or binary.
   #
-  # XXX: threadsafe vs concurrent @driver.parse etc?
-  #
   # @param message [String, Array<Integer>]
   # @raise [ArgumentError] invalid type
   # @raise [RuntimeError] unable to send (socket closed?)
@@ -200,9 +201,9 @@ class Kontena::Websocket::Client
     end
   end
 
-  # Send ping. Register optional callback, called from the #read thread.
+  # Send ping. Optional callback gets called from the #read thread.
   #
-  # XXX: threadsafe vs concurrent @driver.parse etc?
+  # TODO: ping timeout
   #
   # @param string [String]
   # @yield [] received pong
@@ -211,14 +212,13 @@ class Kontena::Websocket::Client
     with_driver do |driver|
       fail unless driver.ping(string) do
         # queue to call block without lock
-        enqueue(&block)
+        enqueue(&block) if block
       end
     end
   end
 
   # Send close frame.
   #
-  # XXX: threadsafe vs concurrent @driver.parse etc?
   # TODO: close timeout
   #
   # Eventually emits on :close, which will disconnect!
@@ -290,7 +290,7 @@ class Kontena::Websocket::Client
     ssl_context = self.ssl_context
 
     ssl_socket = OpenSSL::SSL::SSLSocket.new(tcp_socket, ssl_context)
-    ssl_socket.sync_close = true # XXX: also close TCPSocket
+    ssl_socket.sync_close = true # close TCPSocket after SSL shutdown
     ssl_socket.hostname = self.host # SNI
 
     begin
@@ -304,7 +304,7 @@ class Kontena::Websocket::Client
     end
 
     begin
-      ssl_socket.post_connection_check(self.host) if @ssl_verify # XXX: should raise SSLVerifyError
+      ssl_socket.post_connection_check(self.host) if @ssl_verify
     rescue OpenSSL::SSL::SSLError => exc
       raise Kontena::Websocket::SSLVerifyError.new(exc.message)
     end
@@ -330,7 +330,7 @@ class Kontena::Websocket::Client
   # Must be connected.
   # Registers driver handlers to set @open, @recv_queue, @close state or raise errors
   #
-  # @raise [RuntimeError] XXX: already started?
+  # @raise [RuntimeError] already started?
   def start
     driver = ::WebSocket::Driver.client(@connection)
 
@@ -421,10 +421,9 @@ class Kontena::Websocket::Client
       rescue IOError => exc
         debug "read IOError: #{exc}"
 
-        # XXX: what is @close_error? What if this is a timeout?
+        # race with on_close -> disconnect -> socket.close => socket.read raises IOError: closed stream
         @close_error ||= Kontena::Websocket::CloseError.new(1006, exc.message)
 
-        # on_close -> disconnect -> socket.close => IOError: closed stream
         return
 
       # TODO: Errno::ECONNRESET etc
@@ -463,8 +462,7 @@ class Kontena::Websocket::Client
     @driver = nil
     @connection = nil
 
-    # XXX: raises?
-    # XXX: timeout?
+    # TODO: errors and timeout? SSLSocket.close in particular is bidirectional? 
     @socket.close if @socket
     @socket = nil
   end
