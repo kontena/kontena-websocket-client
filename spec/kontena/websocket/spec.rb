@@ -46,6 +46,7 @@ describe Kontena::Websocket::Client do
         Thread.new do
           loop do
             client = tcp_server.accept
+            client.readpartial(1024)
             client.close
           end
         end

@@ -397,6 +397,7 @@ class Kontena::Websocket::Client
         # just return, #run will handle disconnect
         return
 
+      # XXX: assume this is IOError: closed stream
       rescue IOError => exc
         debug "read IOError: #{exc}"
 
@@ -405,6 +406,8 @@ class Kontena::Websocket::Client
 
         # on_close -> disconnect -> socket.close => IOError: closed stream
         return
+
+      # TODO: Errno::ECONNRESET etc
       end
 
       with_driver do |driver|
