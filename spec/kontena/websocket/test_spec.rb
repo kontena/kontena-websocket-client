@@ -151,6 +151,18 @@ describe Kontena::Websocket::Client do
         end
       end
 
+      context "with default no-verify" do
+        subject {
+          described_class.new("wss://localhost:#{port}")
+        }
+
+        it 'is able to connect' do
+          expect{
+            subject.run
+          }.to raise_error(Kontena::Websocket::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
+        end
+      end
+
       context "with ssl verify" do
         subject {
           described_class.new("wss://localhost:#{port}",
