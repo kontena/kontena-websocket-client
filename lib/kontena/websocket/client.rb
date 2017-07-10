@@ -37,7 +37,10 @@ class Kontena::Websocket::Client
     end
 
     @mutex = Mutex.new # for @driver
-    @recv_queue = []
+
+    # written by #enqueue from @driver callbacks with the @mutex held
+    # drained by #process_queue from #run -> #read_loop without the @mutex held
+    @queue = []
   end
 
   # @return [String]
@@ -204,9 +207,12 @@ class Kontena::Websocket::Client
   # @param string [String]
   # @yield [] received pong
   # @raise [RuntimeError]
-  def ping(string = '', &cb)
+  def ping(string = '', &block)
     with_driver do |driver|
-      fail unless driver.ping(string, &cb)
+      fail unless driver.ping(string) do
+        # queue to call block without lock
+        enqueue(&block)
+      end
     end
   end
 
@@ -237,6 +243,23 @@ class Kontena::Websocket::Client
     @mutex.synchronize {
       yield @driver
     }
+  end
+
+  # Called from @driver callbacks with the @mutex held
+  #
+  # Queues block for call from #process_queue
+  def enqueue(&block)
+    fail unless block
+
+    @queue << block
+  end
+
+  # Called from read_loop without the @mutex held
+  #
+  def process_queue
+    while block = @queue.shift
+      block.call
+    end
   end
 
   # Connect to TCP server.
@@ -361,8 +384,7 @@ class Kontena::Websocket::Client
   #
   # @param event [WebSocket::Driver::MessageEvent] data
   def on_message(event)
-    # XXX: should this be a threadsafe Queue instead?
-    @recv_queue << event.data
+    enqueue { @listen_block.call(event.data) }
   end
 
   # Store the @close_error, and disconnect.
@@ -420,14 +442,8 @@ class Kontena::Websocket::Client
         @open_block = nil
       end
 
-      # yield any parsed messages
-      self.process_messages
-    end
-  end
-
-  def process_messages
-    while message = @recv_queue.shift
-      @listen_block.call(message)
+      # call any blocks enqueud with the lock held
+      self.process_queue
     end
   end
 

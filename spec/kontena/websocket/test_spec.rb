@@ -312,6 +312,19 @@ describe Kontena::Websocket::Client do
           end
         }.to raise_error(Kontena::Websocket::CloseError, 'Connection closed with code 4000: test')
       end
+
+      it 'gets ping responses' do
+        pong = false
+
+        subject.run do
+          subject.ping('test') do
+            pong = true
+            subject.close
+          end
+        end
+
+        expect(pong).to be true
+      end
     end
   end
 end

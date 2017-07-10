@@ -290,7 +290,7 @@ describe Kontena::Websocket::Client do
       }.to change{subject.open?}.from(false).to(true)
     end
 
-    it "registers a message callback that pushes to @receive_queue" do
+    it "registers a message callback that pushes to @queue" do
       driver = subject.start
 
       message = nil
@@ -300,7 +300,7 @@ describe Kontena::Websocket::Client do
 
       expect{
         driver.emit(:message, double(data: 'test'))
-        subject.process_messages
+        subject.process_queue
       }.to change{message}.from(nil).to('test')
     end
 
