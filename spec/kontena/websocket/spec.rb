@@ -123,9 +123,14 @@ describe Kontena::Websocket::Client do
         ssl_context
       end
       let(:ssl_server) do
+        logger.debug "listen ssl_cert=#{ssl_context.cert}"
+
         OpenSSL::SSL::SSLServer.new(tcp_server, ssl_context)
       end
       let(:server_thread) do
+        # XXX: need to generate the ssl_cert first in the main thread to ensure that server and client get the same cert
+        ssl_server = self.ssl_server
+
         Thread.new do
           loop do
             begin
