@@ -341,8 +341,6 @@ class Kontena::Websocket::Client
 
   # @param exc [WebSocket::Driver::ProtocolError]
   def on_error(exc)
-    debug "#{url} error: #{exc} @\n\t#{caller.join("\n\t")}"
-
     # this will presumably propagate up out of #recv_loop, not this function
     raise exc
 
@@ -355,8 +353,6 @@ class Kontena::Websocket::Client
   #
   # @param event [WebSocket::Driver::OpenEvent] no attrs
   def on_open(event)
-    debug "#{url} open @\n\t#{caller.join("\n\t")}"
-
     @open = true
   end
 
@@ -365,8 +361,6 @@ class Kontena::Websocket::Client
   #
   # @param event [WebSocket::Driver::MessageEvent] data
   def on_message(event)
-    debug "#{url} message: #{event.data} @\n\t#{caller.join("\n\t")}"
-
     # XXX: should this be a threadsafe Queue instead?
     @recv_queue << event.data
   end
@@ -377,8 +371,6 @@ class Kontena::Websocket::Client
   #
   # @param event [WebSocket::Driver::CloseEvent] code, reason
   def on_close(event)
-    debug "#{url} close: code=#{event.code}, reason=#{event.reason} @\n\t#{caller.join("\n\t")}"
-
     # store for raise from run()
     @close_error = Kontena::Websocket::CloseError.new(event.code, event.reason)
 
