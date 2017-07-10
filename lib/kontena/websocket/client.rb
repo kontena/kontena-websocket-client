@@ -83,8 +83,9 @@ class Kontena::Websocket::Client
   #  * close
   #
   # @yield [] websocket open
-  # @raise
-  # @raise [Kontena::Websocket::CloseError]
+  # @raise [Kontena::Websocket::ConnectError]
+  # @raise [Kontena::Websocket::ProtocolError]
+  # @raise [Kontena::Websocket::CloseError] connection closed by server
   # @return websocket closed by server
   def run(&block)
     @open_block = block
@@ -240,10 +241,12 @@ class Kontena::Websocket::Client
 
   # Connect to TCP server.
   #
-  # @raise [SystemCallError]
+  # @raise [Kontena::Websocket::ConnectError] Errno::*
   # @return [TCPSocket]
   def connect_tcp
     ::TCPSocket.new(self.host, self.port)
+  rescue SystemCallError => exc
+    raise Kontena::Websocket::ConnectError, exc
   end
 
   # @return [OpenSSL::SSL::SSLContext]
@@ -255,8 +258,9 @@ class Kontena::Websocket::Client
 
   # Connect to TCP server, perform SSL handshake, verify if required.
   #
-  # @raise [OpenSSL::SSL::SSLError]
-  # @raise [Kontena::Websocket::SSLVerifyError]
+  # @raise [Kontena::Websocket::ConnectError] from connect_tcp
+  # @raise [Kontena::Websocket::SSLConnectError]
+  # @raise [Kontena::Websocket::SSLVerifyError] errors that only happen with ssl_verify: true
   # @return [OpenSSL::SSL::SSLSocket]
   def connect_ssl
     tcp_socket = self.connect_tcp
@@ -272,7 +276,7 @@ class Kontena::Websocket::Client
       if exc.message.end_with? 'certificate verify failed'
         raise Kontena::Websocket::SSLVerifyError.from_verify_result(ssl_socket.verify_result)
       else
-        raise # TODO: Kontena::Websocket::SSLError
+        raise Kontena::Websocket::SSLConnectError, exc
       end
     end
 
@@ -287,8 +291,7 @@ class Kontena::Websocket::Client
 
   # Create @socket and @connection
   #
-  # @raise [SystemCallError]
-  # @raise [OpenSSL::SSL::SSLError]
+  # @raise [Kontena::Websocket::ConnectError]
   # @return [Connection]
   def connect
     if ssl?
@@ -336,12 +339,15 @@ class Kontena::Websocket::Client
     return driver
   end
 
-  # @param exc [WebSocket::Driver::URIError]
+  # @param exc [WebSocket::Driver::ProtocolError]
   def on_error(exc)
     debug "#{url} error: #{exc} @\n\t#{caller.join("\n\t")}"
 
     # this will presumably propagate up out of #recv_loop, not this function
     raise exc
+
+  rescue WebSocket::Driver::ProtocolError => exc
+    raise Kontena::Websocket::ProtocolError, exc
   end
 
   # Mark client as opened.

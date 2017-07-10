@@ -15,7 +15,7 @@ describe Kontena::Websocket::Client do
         subject.run do
           opened = true
         end
-      }.to raise_error(Errno::ECONNREFUSED, 'Connection refused - connect(2) for "127.0.0.1" port 1337')
+      }.to raise_error(Kontena::Websocket::ConnectError, 'Connection refused - connect(2) for "127.0.0.1" port 1337')
 
       expect(opened).to be false
     end
@@ -80,7 +80,7 @@ describe Kontena::Websocket::Client do
       it 'raises a protocol error' do
         expect{
           subject.run
-        }.to raise_error(WebSocket::Driver::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 404')
+        }.to raise_error(Kontena::Websocket::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 404')
       end
     end
 
@@ -192,7 +192,7 @@ describe Kontena::Websocket::Client do
         it 'is able to connect' do
           expect{
             subject.run
-          }.to raise_error(WebSocket::Driver::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
+          }.to raise_error(Kontena::Websocket::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
         end
 
         context 'with the wrong hostname' do
@@ -206,7 +206,7 @@ describe Kontena::Websocket::Client do
           it 'raises a SSL verify error about a self-signed cert' do
             expect{
               subject.run
-            }.to raise_error(OpenSSL::SSL::SSLError, 'hostname "127.0.0.1" does not match the server certificate')
+            }.to raise_error(Kontena::Websocket::SSLVerifyError, 'hostname "127.0.0.1" does not match the server certificate')
           end
         end
       end
