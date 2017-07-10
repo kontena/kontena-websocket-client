@@ -55,7 +55,7 @@ describe Kontena::Websocket::Client do
       it 'raises a EOF error' do
         expect{
           subject.run
-        }.to raise_error(Kontena::Websocket::EOFError, 'Connection closed with code 1006: EOF')
+        }.to raise_error(Kontena::Websocket::EOFError, 'Server closed connection without sending close frame')
       end
     end
 
@@ -305,12 +305,13 @@ describe Kontena::Websocket::Client do
         expect(messages).to eq ['Hello World!']
       end
 
-      it 'sees CloseError from server' do
-        expect{
-          subject.run do
-            subject.send('close')
-          end
-        }.to raise_error(Kontena::Websocket::CloseError, 'Connection closed with code 4000: test')
+      it 'sees close from server' do
+        subject.run do
+          subject.send('close')
+        end
+
+        expect(subject.close_code).to eq 4000
+        expect(subject.close_reason).to eq 'test'
       end
 
       it 'gets ping responses' do

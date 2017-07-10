@@ -35,25 +35,12 @@ module Kontena::Websocket
     end
   end
 
-  # Received close frame from server
-  class CloseError < Error
-    attr_reader :code, :reason
+  class SocketError < Error
 
-    def initialize(code, reason)
-      super("Connection closed with code #{code}: #{reason}")
-      @code = code
-      @reason = reason
-    end
-
-    def normal?
-      @code == 1000
-    end
   end
 
-  # Received EOF from server
-  class EOFError < CloseError
-    def initialize
-      super(1006, "EOF")
-    end
+  # Server closed connection without sending close frame
+  class EOFError < SocketError
+    
   end
 end

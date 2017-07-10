@@ -138,14 +138,13 @@ describe Kontena::Websocket::Client do
         }.to change{message}.from(nil).to('test')
       end
 
-      it "registers an close callback that disconnects" do
-        expect(socket).to receive(:close)
-
+      it "registers an close callback that sets @closed" do
         expect{
           driver.emit(:close, double(code: 1337, reason: "test"))
-        }.to change{subject.connected?}.from(true).to(false)
+        }.to change{subject.closed?}.from(false).to(true)
 
-        expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::CloseError, "Connection closed with code 1337: test")
+        expect(subject.close_code).to eq 1337
+        expect(subject.close_reason).to eq 'test'
       end
     end
   end
@@ -324,43 +323,14 @@ describe Kontena::Websocket::Client do
       end
     end
 
-    describe '#read_loop' do
-      it "reads socket and passes it to locked driver for parsing until EOF" do
+    describe '#read' do
+      it "reads from socket and passes it to locked driver for parsing" do
         expect(socket).to receive(:readpartial).with(Integer).and_return('asdf')
-        expect(driver).to receive(:parse).with('asdf')
-
-        expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
-
-        subject.read_loop(socket)
-
-        expect{raise subject.instance_variable_get('@close_error')}.to raise_error(Kontena::Websocket::EOFError, "Connection closed with code 1006: EOF")
-      end
-
-      it "calls open block once, and then messages" do
-        opened = messages = 0
-        subject.instance_variable_set('@open_block', Proc.new do
-          opened += 1
-        end)
-        subject.listen do |message|
-          messages += 1
+        expect(driver).to receive(:parse).with('asdf') do
+          expect(mutex).to be_locked.and be_owned
         end
 
-        expect(socket).to receive(:readpartial).with(Integer).and_return('foo')
-        expect(driver).to receive(:parse).with('foo') do
-          subject.on_open double()
-        end
-
-        expect(socket).to receive(:readpartial).with(Integer).and_return('bar')
-        expect(driver).to receive(:parse).with('bar') do
-          subject.on_message double(data: 'data')
-        end
-
-        expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
-
-        subject.read_loop(socket)
-
-        expect(opened).to eq 1
-        expect(messages).to eq 1
+        subject.read
       end
     end
 
@@ -521,6 +491,67 @@ describe Kontena::Websocket::Client do
         expect(ssl_context).to be_a OpenSSL::SSL::SSLContext
         expect(ssl_context.ca_path).to eq '/etc/kontena-agent/ca.d'
       end
+    end
+  end
+
+  describe '#run' do
+    let(:socket) { instance_double(TCPSocket) }
+    let(:connection) { instance_double(Kontena::Websocket::Client) }
+    let(:driver) { instance_double(WebSocket::Driver::Client) }
+
+    before do
+      allow(subject).to receive(:connect) do
+        subject.instance_variable_set('@socket', socket)
+        connection
+      end
+      allow(subject).to receive(:start).and_return(driver)
+    end
+
+    it "calls open block once, processes messages, and raises on close" do
+      opened = messages = 0
+      subject.listen do |message|
+        messages += 1
+      end
+
+      expect(socket).to receive(:readpartial).with(Integer).and_return('foo')
+      expect(driver).to receive(:parse).with('foo') do
+        subject.on_open double()
+      end
+
+      expect(socket).to receive(:readpartial).with(Integer).and_return('bar')
+      expect(driver).to receive(:parse).with('bar') do
+        subject.on_message double(data: 'data')
+      end
+
+      expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
+
+      expect(socket).to receive(:close)
+
+      expect{
+        subject.run do
+          opened += 1
+        end
+      }.to raise_error(Kontena::Websocket::EOFError)
+
+      expect(opened).to eq 1
+      expect(messages).to eq 1
+    end
+
+    it 'closes the socket on errors' do
+      expect(subject).to receive(:start).and_raise(ArgumentError, 'something went wrong')
+      expect(socket).to receive(:close)
+
+      expect{
+        subject.run
+      }.to raise_error(ArgumentError)
+    end
+
+    it 'survives errors' do
+      expect(subject).to receive(:connect).and_raise(Kontena::Websocket::ConnectError)
+
+      expect{
+        subject.run
+      }.to raise_error(Kontena::Websocket::ConnectError)
     end
   end
 end

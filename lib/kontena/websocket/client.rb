@@ -67,6 +67,7 @@ class Kontena::Websocket::Client
     !!@ssl_verify
   end
 
+  # @return [String]
   def host
     @uri.host
   end
@@ -76,10 +77,53 @@ class Kontena::Websocket::Client
     @uri.port || (@uri.scheme == "ws" ? 80 : 443)
   end
 
+  # Register block to pass received messages to.
+  #
+  # @yield [message] received websocket message payload
+  # @yieldparam message [String, Array<integer>] text or binary
+  def listen(&block)
+    @on_message = block
+  end
+
+  # Connected to server. Not necessarily open yet.
+  #
+  # @return [Boolean]
+  def connected?
+    !!@socket && !!@connection && !!@driver
+  end
+
+  # Server has accepted websocket connection.
+  #
+  # @return [Boolean]
+  def open?
+    !!@open
+  end
+
+  # Server has closed websocket connection.
+  #
+  # @return [Boolean]
+  def closed?
+    !!@closed
+  end
+
+  # Valid once #run returns, when closed?
+  #
+  # @return [Integer]
+  def close_code
+    @close_code
+  end
+
+  # Valid once #run returns, when closed?
+  #
+  # @return [String]
+  def close_reason
+    @close_reason
+  end
+
   # Connect, send websocket handshake, and loop reading responses.
   #
-  # Yield once websocket is open.
-  # Raises an error.
+  # Passed block is called once websocket is open.
+  # Raises on errors.
   # Returns once websocket is closed by server.
   #
   # Intended to be called using a dedicated per-websocket thread.
@@ -94,14 +138,18 @@ class Kontena::Websocket::Client
   # @raise [Kontena::Websocket::CloseError] connection closed by server
   # @return websocket closed by server
   def run(&block)
-    @open_block = block
+    @on_open = block
 
     @connection = self.connect
     @driver = self.start
 
-    self.read_loop(@socket)
+    while !@closed
+      # read and process frames with @driver @mutex held
+      self.read
 
-    raise @close_error unless @close_error.code == CLOSE_NORMAL
+      # call @queue blocks with the lock released
+      self.process_queue
+    end
 
   ensure
     # ensure socket is closed and client disconnected on any of:
@@ -109,14 +157,6 @@ class Kontena::Websocket::Client
     #   * read error
     #   * read EOF
     self.disconnect
-  end
-
-  def connected?
-    !!@socket && !!@connection && !!@driver
-  end
-
-  def open?
-    !!@open
   end
 
   # @raise [RuntimeError] not connected
@@ -173,14 +213,6 @@ class Kontena::Websocket::Client
     end
   end
 
-  # Valid once open
-  #
-  # @yield [message] received websocket message payload
-  # @yieldparam message [String, Array<integer>] text or binary
-  def listen(&block)
-    @listen_block = block
-  end
-
   # Send message frame, either text or binary.
   #
   # @param message [String, Array<Integer>]
@@ -217,11 +249,14 @@ class Kontena::Websocket::Client
     end
   end
 
-  # Send close frame.
+  # Send close frame. Waits for server to send back close frame, and then raises
+  # from #run with a close error.
   #
   # TODO: close timeout
+  # XXX: prevent sending other frames after close?
   #
-  # Eventually emits on :close, which will disconnect!
+  # @param close [Integer]
+  # @param reason [String]
   def close(code = 1000, reason = nil)
     debug "close"
 
@@ -328,7 +363,7 @@ class Kontena::Websocket::Client
 
   # Create @driver and send websocket handshake
   # Must be connected.
-  # Registers driver handlers to set @open, @recv_queue, @close state or raise errors
+  # Registers driver handlers to set @open, @closed states, enqueue messages, or raise errors.
   #
   # @raise [RuntimeError] already started?
   def start
@@ -371,12 +406,12 @@ class Kontena::Websocket::Client
     raise Kontena::Websocket::ProtocolError, exc
   end
 
-  # Mark client as opened.
-  # Causes #read_loop to call @open_block.
+  # Mark client as opened, calling the block passed to #run.
   #
   # @param event [WebSocket::Driver::OpenEvent] no attrs
   def on_open(event)
     @open = true
+    enqueue { @on_open.call } if @on_open
   end
 
   # Queue up received messages
@@ -384,65 +419,41 @@ class Kontena::Websocket::Client
   #
   # @param event [WebSocket::Driver::MessageEvent] data
   def on_message(event)
-    enqueue { @listen_block.call(event.data) }
+    enqueue { @on_message.call(event.data) } if @on_message
   end
 
-  # Store the @close_error, and disconnect.
-  #
-  # Disconnect will close the socket, allowing #read_loop to return.
+  # Mark client as closed, allowing #run to return (and disconnect from the server).
   #
   # @param event [WebSocket::Driver::CloseEvent] code, reason
   def on_close(event)
-    # store for raise from run()
-    @close_error = Kontena::Websocket::CloseError.new(event.code, event.reason)
-
-    # do not wait for server to close
-    # results in EOF for #read_loop, which returns
-    self.disconnect
+    @closed = true
+    @close_code = event.code
+    @close_reason = event.reason
   end
 
-  # Loop to read the socket, parse websocket frames, and call user blocks.
+  # Read from socket, and parse websocket frames, enqueue blocks.
   # The websocket must be connected.
-  def read_loop(socket)
-    loop do
-      begin
-        data = socket.readpartial(FRAME_SIZE)
+  def read
+    begin
+      data = @socket.readpartial(FRAME_SIZE)
 
-      rescue EOFError
-        debug "read EOF"
+    rescue EOFError, IOError => exc
+      debug "read EOF"
 
-        # if we received on :close, the EOF is expected, and we keep that error
-        @close_error ||= Kontena::Websocket::EOFError.new
+      raise Kontena::Websocket::EOFError, 'Server closed connection without sending close frame'
 
-        # just return, #run will handle disconnect
-        return
+    rescue IOError => exc
+      # socket was closed => IOError: closed stream
+      debug "read IOError: #{exc}"
 
-      # XXX: assume this is IOError: closed stream
-      rescue IOError => exc
-        debug "read IOError: #{exc}"
+      raise Kontena::Websocket::SocketError, exc
 
-        # race with on_close -> disconnect -> socket.close => socket.read raises IOError: closed stream
-        @close_error ||= Kontena::Websocket::CloseError.new(1006, exc.message)
+    # TODO: Errno::ECONNRESET etc
+    end
 
-        return
-
-      # TODO: Errno::ECONNRESET etc
-      end
-
-      with_driver do |driver|
-        # call into the driver, causing it to emit the events registered in #start
-        driver.parse(data)
-      end
-
-      # call user callbacks with the mutex released, so that they are free to call back into send()
-      if @open && @open_block
-        # only called once
-        @open_block.call()
-        @open_block = nil
-      end
-
-      # call any blocks enqueud with the lock held
-      self.process_queue
+    with_driver do |driver|
+      # call into the driver, causing it to emit the events registered in #start
+      driver.parse(data)
     end
   end
 
@@ -462,7 +473,7 @@ class Kontena::Websocket::Client
     @driver = nil
     @connection = nil
 
-    # TODO: errors and timeout? SSLSocket.close in particular is bidirectional? 
+    # TODO: errors and timeout? SSLSocket.close in particular is bidirectional?
     @socket.close if @socket
     @socket = nil
   end
