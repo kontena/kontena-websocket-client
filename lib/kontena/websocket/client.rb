@@ -482,6 +482,8 @@ class Kontena::Websocket::Client
     tcp_socket = self.connect_tcp
     ssl_context = self.ssl_context
 
+    debug "connect_ssl: #{ssl_context.inspect}"
+
     ssl_socket = OpenSSL::SSL::SSLSocket.new(tcp_socket, ssl_context)
     ssl_socket.sync_close = true # close TCPSocket after SSL shutdown
     ssl_socket.hostname = self.host # SNI
