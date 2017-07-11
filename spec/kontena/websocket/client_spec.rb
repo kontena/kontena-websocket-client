@@ -500,7 +500,7 @@ describe Kontena::Websocket::Client do
 
         expect(ssl_socket).to receive(:sync_close=).with(true)
         expect(ssl_socket).to receive(:hostname=).with('socket.example.com')
-        expect(ssl_socket).to receive(:connect)
+        expect(ssl_socket).to receive(:connect_nonblock)
         expect(ssl_socket).to receive(:post_connection_check)
 
         expect(subject.connect_ssl).to eq ssl_socket

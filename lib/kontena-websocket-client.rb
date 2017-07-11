@@ -1,3 +1,5 @@
+require_relative './kontena/websocket/openssl_patch'
+
 module Kontena
   module Websocket
     require_relative './kontena/websocket/logging'

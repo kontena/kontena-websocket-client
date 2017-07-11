@@ -419,6 +419,26 @@ class Kontena::Websocket::Client
     ssl_context
   end
 
+  # TODO: connect_deadline to impose a single deadline on the entire process
+  # XXX: specs
+  #
+  # @param ssl_socket [OpenSSL::SSL::SSLSocket]
+  # @raise [Kontena::Websocket::TimeoutError]
+  def ssl_connect(ssl_socket)
+    debug "ssl_connect..."
+    ret = ssl_socket.connect_nonblock
+  rescue IO::WaitReadable
+    debug "ssl_connect wait read: timeout=#{@connect_timeout}"
+    ssl_socket.wait_readable(@connect_timeout) or raise Kontena::Websocket::TimeoutError
+    retry
+  rescue IO::WaitWritable
+    debug "ssl_connect wait write: timeout=#{@connect_timeout}"
+    ssl_socket.wait_writable(@connect_timeout) or raise Kontena::Websocket::TimeoutError
+    retry
+  else
+    debug "ssl_connect: #{ret}"
+  end
+
   # Connect to TCP server, perform SSL handshake, verify if required.
   #
   # @raise [Kontena::Websocket::ConnectError] from connect_tcp
@@ -434,7 +454,7 @@ class Kontena::Websocket::Client
     ssl_socket.hostname = self.host # SNI
 
     begin
-      ssl_socket.connect
+      self.ssl_connect(ssl_socket)
     rescue OpenSSL::SSL::SSLError => exc
       if exc.message.end_with? 'certificate verify failed'
         raise Kontena::Websocket::SSLVerifyError.from_verify_result(ssl_socket.verify_result)
