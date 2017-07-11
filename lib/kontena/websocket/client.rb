@@ -174,14 +174,13 @@ class Kontena::Websocket::Client
   # Intended to be called using a dedicated per-websocket thread.
   # Other threads can then call the other threadsafe methods:
   #  * send
-  #  * ping
   #  * close
   #
   # @yield [] websocket open
   # @raise [Kontena::Websocket::ConnectError]
   # @raise [Kontena::Websocket::ProtocolError]
-  # @raise [Kontena::Websocket::CloseError] connection closed by server
-  # @return websocket closed by server
+  # @raise [Kontena::Websocket::TimeoutError]
+  # @return websocket closed by server, @see #close_code #close_reason
   def run(&block)
     @on_open = block
 
@@ -310,7 +309,12 @@ class Kontena::Websocket::Client
     @on_pong = block
   end
 
-  # Send ping.
+  # Send ping message.
+  #
+  # This is intended to be automatically called from #run per @ping_interval.
+  # Calling it from the #run callbacks also works, but calling it from a different thread
+  # while #run is blocked on read() will ignore the @ping_timeout, unless the server happens
+  # to send something else.
   #
   # @raise [RuntimeError] not connected
   def ping
@@ -340,25 +344,11 @@ class Kontena::Websocket::Client
     end
   end
 
-  # Start read deadline for @ping_timeout
-  def pinging!
-    @pinging = true
-    @ping_at = Time.now
-    @pong_at = nil
-  end
-
   # Waiting for pong from ping
   #
   # @return [Boolean]
   def pinging?
     !!@pinging
-  end
-
-  # Stop read deadline for @ping_timeout
-  def pinged!
-    @pinging = false
-    @pong_at = Time.now
-    @ping_delay = @pong_at - @ping_at
   end
 
   # Measured ping-pong delay from previous ping
@@ -370,11 +360,14 @@ class Kontena::Websocket::Client
     @ping_delay
   end
 
-  # Send close frame. Waits for server to send back close frame, and then raises
-  # from #run with a close error.
+  # Send close frame. Waits for server to send back close frame, and then allows #run to return.
+  # Imposes a close timeout when called from #run blocks (run/on_message/on_pong do ...). If called from
+  # a different thread, then #run should eventually return, once either:
+  # * server sends close frame
+  # * server sends any other frame after the close timeout expires
+  # * the ping interval expires
   #
-  # TODO: close timeout
-  # XXX: prevent sending other frames after close?
+  # XXX: prevent #send after close?
   #
   # @param close [Integer]
   # @param reason [String]
@@ -446,17 +439,18 @@ class Kontena::Websocket::Client
   # XXX: specs
   #
   # @param ssl_socket [OpenSSL::SSL::SSLSocket]
+  # @raise [OpenSSL::SSL::SSLError]
   # @raise [Kontena::Websocket::TimeoutError]
   def ssl_connect(ssl_socket)
     debug "ssl_connect..."
     ret = ssl_socket.connect_nonblock
   rescue IO::WaitReadable
     debug "ssl_connect wait read: timeout=#{@connect_timeout}"
-    ssl_socket.wait_readable(@connect_timeout) or raise Kontena::Websocket::TimeoutError
+    ssl_socket.wait_readable(@connect_timeout) or raise Kontena::Websocket::TimeoutError, "SSL connect read timeout after #{@connect_timeout}s"
     retry
   rescue IO::WaitWritable
     debug "ssl_connect wait write: timeout=#{@connect_timeout}"
-    ssl_socket.wait_writable(@connect_timeout) or raise Kontena::Websocket::TimeoutError
+    ssl_socket.wait_writable(@connect_timeout) or raise Kontena::Websocket::TimeoutError, "SSL connect write timeout after #{@connect_timeout}s"
     retry
   else
     debug "ssl_connect: #{ret}"
@@ -498,6 +492,7 @@ class Kontena::Websocket::Client
   # Create @socket and return connection wrapper.
   #
   # @raise [Kontena::Websocket::ConnectError]
+  # @raise [Kontena::Websocket::TimeoutError]
   # @return [Connection]
   def connect
     if ssl?
@@ -545,7 +540,7 @@ class Kontena::Websocket::Client
     # not expected to emit anything, not even :error
     fail unless driver.start
 
-    started!
+    started! # start @open_timeout
 
     return driver
   end
@@ -587,6 +582,20 @@ class Kontena::Websocket::Client
   # Start read deadline for @open_timeout
   def started!
     @started_at = Time.now
+  end
+
+  # Start read deadline for @ping_timeout
+  def pinging!
+    @pinging = true
+    @ping_at = Time.now
+    @pong_at = nil
+  end
+
+  # Stop read deadline for @ping_timeout
+  def pinged!
+    @pinging = false
+    @pong_at = Time.now
+    @ping_delay = @pong_at - @ping_at
   end
 
   # Start read deadline for @open_timeout
