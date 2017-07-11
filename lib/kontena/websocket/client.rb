@@ -46,22 +46,18 @@ class Kontena::Websocket::Client
 
   # @param [String] url
   # @param headers [Hash{String => String}]
-  # @param ssl_version [OpenSSL::SSL::SSLContext::METHODS] :SSLv23, :SSLv3, :TLSv1, :TLSv1_1, :TLSv1_2
-  # @param ssl_verify [Boolean] verify peer cert, host
-  # @param ssl_ca_file [String] path to CA cert bundle file
-  # @param ssl_ca_path [String] path to hashed CA cert directory
+  # @param ssl_params [Hash] @see OpenSSL::SSL::SSLContext
+  #   The DEFAULT_PARAMS includes verify_mode: OpenSSL::SSL::VERIFY_PEER.
+  #   Use { verify_mode: OpenSSL::SSL::VERIFY_NONE } to disable Kontena::Websocket::SSLVerifyError on connect.
   # @param connect_timeout [Float] timeout for TCP handshake; XXX: each phase of the SSL handshake
-  # @param open_timeout [Float] expect open frame after start()
+  # @param open_timeout [Float] expect open frame after #start
   # @param ping_interval [Float] send pings every interval seconds after previous ping
-  # @param ping_timeout [Float] expect pong frame after ping()
-  # @param close_timeout [Float] expect close frame after close()
-  # @param write_timeout [Float] throttle when sending faster than the server is able to receive, fail if no progress is made
+  # @param ping_timeout [Float] expect pong frame after #ping
+  # @param close_timeout [Float] expect close frame after #close
+  # @param write_timeout [Float] block #send when sending faster than the server is able to receive, fail if no progress is made
   # @raise [ArgumentError] Invalid websocket URI
   def initialize(url, headers: {},
-      ssl_version: :SSLv23,
-      ssl_verify: nil,
-      ssl_ca_file: nil,
-      ssl_ca_path: nil,
+      ssl_params: {},
       connect_timeout: CONNECT_TIMEOUT,
       open_timeout: OPEN_TIMEOUT,
       ping_interval: PING_INTERVAL,
@@ -71,13 +67,9 @@ class Kontena::Websocket::Client
   )
     @uri = URI.parse(url)
     @headers = headers
-    @ssl_verify = ssl_verify
-    @ssl_params = {
-      ssl_version: ssl_version,
-      ca_file: ssl_ca_file,
-      ca_path: ssl_ca_path,
-      verify_mode: ssl_verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE,
-    }
+    @ssl_params = ssl_params
+    @ssl_verify =
+
     @connect_timeout = connect_timeout
     @open_timeout = open_timeout
     @ping_interval = ping_interval
@@ -119,7 +111,7 @@ class Kontena::Websocket::Client
   #
   # @return [Boolean]
   def ssl_verify?
-    !!@ssl_verify
+    ssl? && ssl_context.verify_mode != OpenSSL::SSL::VERIFY_NONE
   end
 
   # @return [String]
@@ -454,9 +446,9 @@ class Kontena::Websocket::Client
 
   # @return [OpenSSL::SSL::SSLContext]
   def ssl_context
-    ssl_context = OpenSSL::SSL::SSLContext.new()
-    ssl_context.set_params(**@ssl_params)
-    ssl_context
+    @ssl_context ||= OpenSSL::SSL::SSLContext.new().tap do |ssl_context|
+      ssl_context.set_params(@ssl_params)
+    end
   end
 
   # TODO: connect_deadline to impose a single deadline on the entire process
@@ -505,7 +497,7 @@ class Kontena::Websocket::Client
     end
 
     begin
-      ssl_socket.post_connection_check(self.host) if @ssl_verify
+      ssl_socket.post_connection_check(self.host) if ssl_verify?
     rescue OpenSSL::SSL::SSLError => exc
       raise Kontena::Websocket::SSLVerifyError.new(exc.message)
     end

@@ -231,9 +231,13 @@ describe Kontena::Websocket::Client do
         end
       end
 
-      context "with default no-verify" do
+      context "without ssl verify" do
         subject {
-          described_class.new("wss://localhost:#{port}")
+          described_class.new("wss://localhost:#{port}",
+            ssl_params: {
+              verify_mode: OpenSSL::SSL::VERIFY_NONE,
+            }
+          )
         }
 
         it 'is able to connect' do
@@ -243,11 +247,9 @@ describe Kontena::Websocket::Client do
         end
       end
 
-      context "with ssl verify" do
+      context "with default ssl verify" do
         subject {
-          described_class.new("wss://localhost:#{port}",
-            ssl_verify: true,
-          )
+          described_class.new("wss://localhost:#{port}")
         }
 
         it 'raises a SSL verify error about a self-signed cert' do
@@ -266,8 +268,10 @@ describe Kontena::Websocket::Client do
 
           subject {
             described_class.new("wss://localhost:#{port}",
-              ssl_verify: true,
-              ssl_ca_file: cert_file.path,
+              ssl_params: {
+                verify_mode: OpenSSL::SSL::VERIFY_PEER,
+                ca_file: cert_file.path,
+              },
             )
           }
 
@@ -289,8 +293,10 @@ describe Kontena::Websocket::Client do
           context 'with the wrong hostname' do
             subject {
               described_class.new("wss://127.0.0.1:#{port}",
-              ssl_verify: true,
-              ssl_ca_file: cert_file.path,
+                ssl_params: {
+                  verify_mode: OpenSSL::SSL::VERIFY_PEER,
+                  ca_file: cert_file.path,
+                },
               )
             }
 

@@ -30,7 +30,7 @@ describe Kontena::Websocket::Client do
       expect(subject.url).to eq 'wss://socket.example.com'
       expect(subject.scheme).to eq 'wss'
       expect(subject.ssl?).to be true
-      expect(subject.ssl_verify?).to be false
+      expect(subject.ssl_verify?).to be true
       expect(subject.host).to eq 'socket.example.com'
       expect(subject.port).to eq 443
     end
@@ -422,15 +422,22 @@ describe Kontena::Websocket::Client do
     end
   end
 
-  context 'for a wss:// url' do
-    let(:url) { 'wss://socket.example.com/'}
-    subject { described_class.new(url) }
+  context 'for a wss:// url without verify' do
+    let(:url) { 'wss://socket.example.com/' }
+    subject { described_class.new(url, ssl_params: { verify_mode: OpenSSL::SSL::VERIFY_NONE} ) }
 
     let(:tcp_socket) { instance_double(TCPSocket) }
     let(:ssl_socket) { instance_double(OpenSSL::SSL::SSLSocket) }
 
     before do
       allow(subject).to receive(:connect_tcp).and_return(tcp_socket)
+    end
+
+    it 'is ssl?' do
+      expect(subject.ssl?).to be true
+    end
+    it 'is not ssl_verify?' do
+      expect(subject.ssl_verify?).to be false
     end
 
     describe '#ssl_context' do
@@ -469,9 +476,9 @@ describe Kontena::Websocket::Client do
     end
   end
 
-  context "for a wss:// URL with ssl_verify" do
+  context "for a wss:// URL with default verify_mode" do
     let(:url) { 'wss://socket.example.com/'}
-    subject { described_class.new(url, ssl_verify: true) }
+    subject { described_class.new(url) }
 
     let(:tcp_socket) { instance_double(TCPSocket) }
     let(:ssl_socket) { instance_double(OpenSSL::SSL::SSLSocket) }
@@ -513,7 +520,7 @@ describe Kontena::Websocket::Client do
 
   context "for a wss:// URL with ssl_ca_file" do
     let(:url) { 'wss://socket.example.com/'}
-    subject { described_class.new(url, ssl_ca_file: '/etc/kontena-agent/ca.pem') }
+    subject { described_class.new(url, ssl_params: { ca_file: '/etc/kontena-agent/ca.pem' } ) }
 
     describe '#ssl_context' do
       it "configures ca_file" do
@@ -527,7 +534,7 @@ describe Kontena::Websocket::Client do
 
   context "for a wss:// URL with ssl_ca_path" do
     let(:url) { 'wss://socket.example.com/'}
-    subject { described_class.new(url, ssl_ca_path: '/etc/kontena-agent/ca.d') }
+    subject { described_class.new(url, ssl_params: { ca_path: '/etc/kontena-agent/ca.d' } ) }
 
     describe '#ssl_context' do
       it "configures ca_path" do
