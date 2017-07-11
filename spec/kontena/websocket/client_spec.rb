@@ -564,12 +564,12 @@ describe Kontena::Websocket::Client do
         subject.on_open double()
       end
 
-      expect(connection).to receive(:read).with(Integer, timeout: nil).and_return('bar')
+      expect(connection).to receive(:read).with(Integer, timeout: Float).and_return('bar')
       expect(driver).to receive(:parse).with('bar') do
         subject.on_message double(data: 'data')
       end
 
-      expect(connection).to receive(:read).with(Integer, timeout: nil).and_raise(EOFError)
+      expect(connection).to receive(:read).with(Integer, timeout: Float).and_raise(EOFError)
 
       expect(socket).to receive(:close)
 

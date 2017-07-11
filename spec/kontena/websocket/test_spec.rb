@@ -39,7 +39,7 @@ describe Kontena::Websocket::Client do
       it "raises a connection timeout error" do
         expect{
           subject.run
-        }.to raise_error(Kontena::Websocket::TimeoutError, 'Connect timeout after 0.1s while waiting 0.1s for connect')
+        }.to raise_error(Kontena::Websocket::TimeoutError, 'Connect timeout after 0.1s')
       end
     end
   end
@@ -372,13 +372,15 @@ describe Kontena::Websocket::Client do
         end
       end
 
+      let(:ping_interval) { 10.0 }
       subject {
         described_class.new("ws://127.0.0.1:#{port}",
           connect_timeout: 1.0,
           open_timeout: 1.0,
-          ping_timeout: 0.5,
-          close_timeout: 0.1,
-          write_timeout: 0.1,
+          ping_interval: ping_interval,
+          ping_timeout: 0.13,
+          close_timeout: 0.11,
+          write_timeout: 0.12,
         )
       }
 
@@ -444,7 +446,7 @@ describe Kontena::Websocket::Client do
               # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
               subject.send('sleep')
             end
-          }.to raise_error(Kontena::Websocket::TimeoutError, 'write timeout after 0.1s')
+          }.to raise_error(Kontena::Websocket::TimeoutError, 'write timeout after 0.12s')
         end
       end
 
@@ -456,21 +458,20 @@ describe Kontena::Websocket::Client do
 
             subject.close
           end
-        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.1s for close/)
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.11s for close/)
       end
 
-      it 'raises ping timeout if the server blocks' do
-        expect{
-          subject.run do
-            # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
-            subject.send('sleep')
+      context 'with a short ping interval' do
+        let(:ping_interval) { 0.5 }
 
-            # XXX: from a different thread... does not affect the read timeout
-            Thread.new do
-              subject.ping
+        it 'raises ping timeout if the server blocks' do
+          expect{
+            subject.run do
+              # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
+              subject.send('sleep')
             end
-          end
-        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.5s for ping/)
+          }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.13s for pong/)
+        end
       end
     end
   end

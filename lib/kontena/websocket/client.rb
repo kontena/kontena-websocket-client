@@ -16,7 +16,8 @@ class Kontena::Websocket::Client
   FRAME_SIZE = 4 * 1024
   CONNECT_TIMEOUT = 60.0
   OPEN_TIMEOUT = 60.0
-  PING_TIMEOUT = 60.0
+  PING_INTERVAL = 60.0
+  PING_TIMEOUT = 10.0
   CLOSE_TIMEOUT = 60.0
   WRITE_TIMEOUT = 60.0
 
@@ -27,10 +28,11 @@ class Kontena::Websocket::Client
   # @param ssl_ca_file [String] path to CA cert bundle file
   # @param ssl_ca_path [String] path to hashed CA cert directory
   # @param connect_timeout [Float]
-  # @param open_timeout [Float]
-  # @param ping_timeout [Float]
-  # @param close_timeout [Float]
-  # @param write_timeout [Float] guarantee progress per each write syscall when sending faster than the server is receiving
+  # @param open_timeout [Float] expect server open frame after start()
+  # @param ping_interval [Float] send pings every interval seconds
+  # @param ping_timeout [Float] expect pong response after timeout seconds
+  # @param close_timeout [Float] expect server close frame after close()
+  # @param write_timeout [Float] throttle when sending faster than the server is able to receive, fail if no progress is made
   # @raise [ArgumentError] Invalid websocket URI
   def initialize(url, headers: {},
       ssl_version: :SSLv23,
@@ -39,6 +41,7 @@ class Kontena::Websocket::Client
       ssl_ca_path: nil,
       connect_timeout: CONNECT_TIMEOUT,
       open_timeout: OPEN_TIMEOUT,
+      ping_interval: PING_INTERVAL,
       ping_timeout: PING_TIMEOUT,
       close_timeout: CLOSE_TIMEOUT,
       write_timeout: WRITE_TIMEOUT
@@ -54,6 +57,7 @@ class Kontena::Websocket::Client
     }
     @connect_timeout = connect_timeout
     @open_timeout = open_timeout
+    @ping_interval = ping_interval
     @ping_timeout = ping_timeout
     @close_timeout = close_timeout
     @write_timeout = write_timeout
@@ -70,6 +74,7 @@ class Kontena::Websocket::Client
 
     # sequential ping-pongs
     @ping_id = 0
+    @ping_at = Time.now # fake for first ping_interval
   end
 
   # @return [String]
@@ -184,21 +189,31 @@ class Kontena::Websocket::Client
     @driver = self.start
 
     while !@closed
-      read_timeout = self.read_timeout
+      read_state, state_start, state_timeout = self.read_state_timeout
 
-      if !read_timeout || read_timeout > 0
+      if state_timeout
+        read_deadline = state_start + state_timeout
+        read_timeout = read_deadline - Time.now
+      else
+        read_timeout = nil
+      end
+
+      begin
         # read and process frames with @driver @mutex held
         self.read(read_timeout)
-      else
-        raise Kontena::Websocket::TimeoutError, "read deadline expired"
+      rescue Kontena::Websocket::TimeoutError => exc
+        if read_state == :ping
+          self.ping
+        elsif read_state
+          raise exc.class.new("#{exc} while waiting #{state_timeout}s for #{read_state}")
+        else
+          raise
+        end
       end
 
       # call @queue blocks with the lock released
       self.process_queue
     end
-
-  rescue Kontena::Websocket::TimeoutError => exc
-    raise wrap_timeout_error(exc)
 
   ensure
     # ensure socket is closed and client disconnected on any of:
@@ -574,34 +589,19 @@ class Kontena::Websocket::Client
 
   # Return read deadline for current read state
   #
-  # @return [Float]
-  def read_timeout
+  # @return [Symbol, Float, Float] state, time, timeout
+  def read_state_timeout
     case
     when starting? && @open_timeout
-      @started_at + @open_timeout - Time.now
+      [:open, @started_at, @open_timeout]
     when pinging? && @ping_timeout
-      @ping_at + @ping_timeout - Time.now
+      [:pong, @ping_at, @ping_timeout]
     when closing? && @close_timeout
-      @closing_at + @close_timeout - Time.now
+      [:close, @closing_at, @close_timeout]
+    when @ping_interval
+      [:ping, @ping_at, @ping_interval]
     else
-      nil
-    end
-  end
-
-  # @param exc [Kontena::Websocket::TimeoutError]
-  # @raise [Kontena::Websocket::TimeoutError] ... while waiting ... for ...
-  def wrap_timeout_error(exc)
-    case
-    when !@connection && @connect_timeout
-      exc.class.new("#{exc} while waiting #{@connect_timeout}s for connect")
-    when starting? && @open_timeout
-      exc.class.new("#{exc} while waiting #{@open_timeout}s for open")
-    when pinging? && @ping_timeout
-      exc.class.new("#{exc} while waiting #{@ping_timeout}s for ping")
-    when closing? && @close_timeout
-      exc.class.new("#{exc} while waiting #{@close_timeout}s for close")
-    else
-      exc
+      [nil, nil, nil]
     end
   end
 
@@ -609,8 +609,14 @@ class Kontena::Websocket::Client
   # The websocket must be connected.
   #
   # @param timeout [Flaot] seconds
+  # @raise [Kontena::Websocket::TimeoutError] read deadline expired
+  # @raise [Kontena::Websocket::TimeoutError] read timeout after X.Ys
   # @raise [Kontena::Websocket::SocketError]
   def read(timeout = nil)
+    if timeout && timeout <= 0.0
+      raise Kontena::Websocket::TimeoutError, "read deadline expired"
+    end
+
     begin
       data = @connection.read(FRAME_SIZE, timeout: timeout)
 
