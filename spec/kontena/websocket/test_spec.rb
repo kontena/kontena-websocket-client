@@ -376,6 +376,7 @@ describe Kontena::Websocket::Client do
         described_class.new("ws://127.0.0.1:#{port}",
           connect_timeout: 1.0,
           open_timeout: 1.0,
+          ping_timeout: 0.5,
           close_timeout: 0.1,
           write_timeout: 0.1,
         )
@@ -417,7 +418,7 @@ describe Kontena::Websocket::Client do
         pong = false
 
         subject.run do
-          subject.ping('test') do
+          subject.ping do
             pong = true
             subject.close
           end
@@ -435,7 +436,7 @@ describe Kontena::Websocket::Client do
           end
         end
 
-        it 'raises a write timeout when the server blocks' do
+        it 'raises write timeout if the server blocks' do
           expect{
             subject.run do
               sender_thread
@@ -447,7 +448,7 @@ describe Kontena::Websocket::Client do
         end
       end
 
-      it 'raises timeout on close if the server blocks' do
+      it 'raises close timeout if the server blocks' do
         expect{
           subject.run do
             # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
@@ -456,6 +457,20 @@ describe Kontena::Websocket::Client do
             subject.close
           end
         }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.1s for close/)
+      end
+
+      it 'raises ping timeout if the server blocks' do
+        expect{
+          subject.run do
+            # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
+            subject.send('sleep')
+
+            # XXX: from a different thread... does not affect the read timeout
+            Thread.new do
+              subject.ping
+            end
+          end
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.5s for ping/)
       end
     end
   end

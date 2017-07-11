@@ -281,19 +281,41 @@ describe Kontena::Websocket::Client do
     end
 
     describe '#ping' do
-      it "sends ping with defaults and no block" do
-        expect(driver).to receive(:ping).with('').and_return(true)
+      let(:ping_id) { 5 }
+      before do
+        subject.instance_variable_set('@ping_id', ping_id)
+      end
+
+      it "sends ping with next id" do
+        expect(driver).to receive(:ping).with('6').and_return(true)
 
         subject.ping
       end
 
-      it "sends ping with message and callback" do
-        # XXX: how to expect block?
-        expect(driver).to receive(:ping).with('1').and_return(true)
+      it "sends ping with callback on pong" do
+        ping_id = nil
+        ping_block = nil
 
-        subject.ping('1') do
-          # pong
+        expect(driver).to receive(:ping) do |id, &block|
+          ping_id = id
+          ping_block = block
+
+          true
         end
+
+        ping_delay = nil
+        subject.ping do |delay|
+          ping_delay = delay
+        end
+
+        expect(ping_block).to_not be nil
+        expect(ping_delay).to be nil
+
+        ping_block.call
+        subject.process_queue
+
+        expect(ping_delay).to_not be nil
+        expect(ping_delay).to be > 0.0
       end
 
       it "fails if driver returns false" do

@@ -16,6 +16,7 @@ class Kontena::Websocket::Client
   FRAME_SIZE = 4 * 1024
   CONNECT_TIMEOUT = 60.0
   OPEN_TIMEOUT = 60.0
+  PING_TIMEOUT = 60.0
   CLOSE_TIMEOUT = 60.0
   WRITE_TIMEOUT = 60.0
 
@@ -27,6 +28,7 @@ class Kontena::Websocket::Client
   # @param ssl_ca_path [String] path to hashed CA cert directory
   # @param connect_timeout [Float]
   # @param open_timeout [Float]
+  # @param ping_timeout [Float]
   # @param close_timeout [Float]
   # @param write_timeout [Float] guarantee progress per each write syscall when sending faster than the server is receiving
   # @raise [ArgumentError] Invalid websocket URI
@@ -37,6 +39,7 @@ class Kontena::Websocket::Client
       ssl_ca_path: nil,
       connect_timeout: CONNECT_TIMEOUT,
       open_timeout: OPEN_TIMEOUT,
+      ping_timeout: PING_TIMEOUT,
       close_timeout: CLOSE_TIMEOUT,
       write_timeout: WRITE_TIMEOUT
   )
@@ -51,6 +54,7 @@ class Kontena::Websocket::Client
     }
     @connect_timeout = connect_timeout
     @open_timeout = open_timeout
+    @ping_timeout = ping_timeout
     @close_timeout = close_timeout
     @write_timeout = write_timeout
 
@@ -63,6 +67,9 @@ class Kontena::Websocket::Client
     # written by #enqueue from @driver callbacks with the @mutex held
     # drained by #process_queue from #run -> #read_loop without the @mutex held
     @queue = []
+
+    # sequential ping-pongs
+    @ping_id = 0
   end
 
   # @return [String]
@@ -277,18 +284,67 @@ class Kontena::Websocket::Client
 
   # Send ping. Optional callback gets called from the #read thread.
   #
-  # TODO: ping timeout
+  # If new pings are sent before old pings get any response, then the older pings do not yield on pong.
+  # The ping interval should be longer than the ping timeout.
   #
-  # @param string [String]
-  # @yield [] received pong
-  # @raise [RuntimeError]
-  def ping(string = '', &block)
+  # @yield [delay] received pong
+  # @yieldparam delay [Float] ping-pong delay in seconds
+  # @raise [RuntimeError] not connected
+  def ping(&block)
     with_driver do |driver|
-      fail unless driver.ping(string) do
-        # queue to call block without lock
-        enqueue(&block) if block
+      ping_id = @ping_id += 1
+
+      debug "pinging with id=#{ping_id}"
+
+      fail unless driver.ping(ping_id.to_s) do
+        debug "pong with id=#{ping_id}"
+
+        # resolve ping timeout, unless this pong is late and we already sent a new one
+        # called with @mutex held
+        if ping_id == @ping_id
+          pinged!
+          ping_delay = @ping_delay
+
+          debug "ping-pong with id=#{ping_id} in #{ping_delay}s"
+
+          # queue to call block without @mutex held
+          enqueue { block.call(ping_delay) } if block
+        end
       end
+
+      # XXX: need to control ping interval for read timeout while waiting for pong
+      pinging!
     end
+  end
+
+  # Start read deadline for @ping_timeout
+  def pinging!
+    @pinging = true
+    @ping_at = Time.now
+    @pong_at = nil
+  end
+
+  # Waiting for pong from ping
+  #
+  # @return [Boolean]
+  def pinging?
+    !!@pinging
+  end
+
+  # Stop read deadline for @ping_timeout
+  def pinged!
+    @pinging = false
+    @pong_at = Time.now
+    @ping_delay = @pong_at - @ping_at
+  end
+
+  # Measured ping-pong delay from previous ping
+  #
+  # nil if not pinged yet
+  #
+  # @return [Float, nil]
+  def ping_delay
+    @ping_delay
   end
 
   # Send close frame. Waits for server to send back close frame, and then raises
@@ -503,6 +559,8 @@ class Kontena::Websocket::Client
     case
     when starting? && @open_timeout
       @started_at + @open_timeout - Time.now
+    when pinging? && @ping_timeout
+      @ping_at + @ping_timeout - Time.now
     when closing? && @close_timeout
       @closing_at + @close_timeout - Time.now
     else
@@ -518,6 +576,8 @@ class Kontena::Websocket::Client
       exc.class.new("#{exc} while waiting #{@connect_timeout}s for connect")
     when starting? && @open_timeout
       exc.class.new("#{exc} while waiting #{@open_timeout}s for open")
+    when pinging? && @ping_timeout
+      exc.class.new("#{exc} while waiting #{@ping_timeout}s for ping")
     when closing? && @close_timeout
       exc.class.new("#{exc} while waiting #{@close_timeout}s for close")
     else
