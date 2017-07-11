@@ -389,7 +389,7 @@ describe Kontena::Websocket::Client do
         messages = []
 
         expect{
-          subject.listen do |message|
+          subject.on_message do |message|
             messages << message
           end
 

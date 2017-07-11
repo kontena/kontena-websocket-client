@@ -112,7 +112,7 @@ class Kontena::Websocket::Client
   #
   # @yield [message] received websocket message payload
   # @yieldparam message [String, Array<integer>] text or binary
-  def listen(&block)
+  def on_message(&block)
     @on_message = block
   end
 
@@ -526,19 +526,19 @@ class Kontena::Websocket::Client
     # these are called from read_loop -> with_driver { driver.parse } with the @mutex held
     # do not recurse back into with_driver!
     driver.on :error do |event|
-      self.on_error(event)
+      self.on_driver_error(event)
     end
 
     driver.on :open do |event|
-      self.on_open(event)
+      self.on_driver_open(event)
     end
 
     driver.on :message do |event|
-      self.on_message(event)
+      self.on_driver_message(event)
     end
 
     driver.on :close do |event|
-      self.on_close(event)
+      self.on_driver_close(event)
     end
 
     # not expected to emit anything, not even :error
@@ -550,7 +550,7 @@ class Kontena::Websocket::Client
   end
 
   # @param exc [WebSocket::Driver::ProtocolError]
-  def on_error(exc)
+  def on_driver_error(exc)
     # this will presumably propagate up out of #recv_loop, not this function
     raise exc
 
@@ -561,7 +561,7 @@ class Kontena::Websocket::Client
   # Mark client as opened, calling the block passed to #run.
   #
   # @param event [WebSocket::Driver::OpenEvent] no attrs
-  def on_open(event)
+  def on_driver_open(event)
     @open = true
     enqueue { @on_open.call } if @on_open
   end
@@ -570,14 +570,14 @@ class Kontena::Websocket::Client
   # Causes #read_loop -> #process_messages to dequeue and yield to @listen_block
   #
   # @param event [WebSocket::Driver::MessageEvent] data
-  def on_message(event)
+  def on_driver_message(event)
     enqueue { @on_message.call(event.data) } if @on_message
   end
 
   # Mark client as closed, allowing #run to return (and disconnect from the server).
   #
   # @param event [WebSocket::Driver::CloseEvent] code, reason
-  def on_close(event)
+  def on_driver_close(event)
     @closed = true
     @close_code = event.code
     @close_reason = event.reason

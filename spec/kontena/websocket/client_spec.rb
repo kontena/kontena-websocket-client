@@ -128,7 +128,7 @@ describe Kontena::Websocket::Client do
 
       it "registers a message callback that pushes to @queue" do
         message = nil
-        subject.listen do |m|
+        subject.on_message do |m|
           message = m
         end
 
@@ -558,18 +558,18 @@ describe Kontena::Websocket::Client do
 
     it "calls open block once, processes messages, and raises on close" do
       opened = messages = 0
-      subject.listen do |message|
+      subject.on_message do |message|
         messages += 1
       end
 
       expect(connection).to receive(:read).with(Integer, timeout: Float).and_return('foo')
       expect(driver).to receive(:parse).with('foo') do
-        subject.on_open double()
+        subject.on_driver_open double()
       end
 
       expect(connection).to receive(:read).with(Integer, timeout: Float).and_return('bar')
       expect(driver).to receive(:parse).with('bar') do
-        subject.on_message double(data: 'data')
+        subject.on_driver_message double(data: 'data')
       end
 
       expect(connection).to receive(:read).with(Integer, timeout: Float).and_raise(EOFError)
