@@ -325,7 +325,7 @@ describe Kontena::Websocket::Client do
 
     describe '#read' do
       it "reads from socket and passes it to locked driver for parsing" do
-        expect(socket).to receive(:readpartial).with(Integer).and_return('asdf')
+        expect(connection).to receive(:read).with(Integer, timeout: nil).and_return('asdf')
         expect(driver).to receive(:parse).with('asdf') do
           expect(mutex).to be_locked.and be_owned
         end
@@ -518,7 +518,11 @@ describe Kontena::Websocket::Client do
         subject.instance_variable_set('@socket', socket)
         connection
       end
-      allow(subject).to receive(:start).and_return(driver)
+      allow(subject).to receive(:start) do
+        subject.started!
+
+        driver
+      end
     end
 
     it "calls open block once, processes messages, and raises on close" do
@@ -527,17 +531,17 @@ describe Kontena::Websocket::Client do
         messages += 1
       end
 
-      expect(socket).to receive(:readpartial).with(Integer).and_return('foo')
+      expect(connection).to receive(:read).with(Integer, timeout: Float).and_return('foo')
       expect(driver).to receive(:parse).with('foo') do
         subject.on_open double()
       end
 
-      expect(socket).to receive(:readpartial).with(Integer).and_return('bar')
+      expect(connection).to receive(:read).with(Integer, timeout: nil).and_return('bar')
       expect(driver).to receive(:parse).with('bar') do
         subject.on_message double(data: 'data')
       end
 
-      expect(socket).to receive(:readpartial).with(Integer).and_raise(EOFError)
+      expect(connection).to receive(:read).with(Integer, timeout: nil).and_raise(EOFError)
 
       expect(socket).to receive(:close)
 

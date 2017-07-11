@@ -34,6 +34,20 @@ class Kontena::Websocket::Client::Connection
     retry
   end
 
+  # @param size [Integer]
+  # @param timeout [Float]
+  # @raise [EOFError]
+  # @return [String] 0..size bytes
+  def read(size, timeout: nil)
+    buf = nonblocking_timeout(timeout) do
+      @socket.read_nonblock(size)
+    end
+
+    debug "read size=#{size}: #buf=#{buf.size}"
+
+    return buf
+  end
+
   # @param buf [String]
   def write(buf)
     until buf.empty?

@@ -39,7 +39,7 @@ describe Kontena::Websocket::Client do
       it "raises a connection timeout error" do
         expect{
           subject.run
-        }.to raise_error(Kontena::Websocket::TimeoutError, 'Connect timeout after 0.1s')
+        }.to raise_error(Kontena::Websocket::TimeoutError, 'Connect timeout after 0.1s while waiting 0.1s for connect')
       end
     end
   end
@@ -61,7 +61,7 @@ describe Kontena::Websocket::Client do
       server_thread.kill
     end
 
-    subject { described_class.new("ws://127.0.0.1:#{port}") }
+    subject { described_class.new("ws://127.0.0.1:#{port}", open_timeout: 0.1) }
 
     context "that immediately closes the connection" do
       let(:server_thread) do
@@ -78,6 +78,64 @@ describe Kontena::Websocket::Client do
         expect{
           subject.run
         }.to raise_error(Kontena::Websocket::EOFError, 'Server closed connection without sending close frame')
+      end
+    end
+
+    context "that hangs after accepting the connection" do
+      let(:server_thread) do
+        Thread.new do
+          loop do
+            client = tcp_server.accept
+            begin
+              logger.debug "accepted #{client}, sleeping..."
+              sleep 1.0
+            ensure
+              client.close
+            end
+          end
+        end
+      end
+
+      it 'raises an open timeout' do
+        expect{
+          subject.run
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.1s for open/)
+      end
+    end
+
+    context "that stalls with infinite HTTP headers after accepting the connection" do
+      let(:server_thread) do
+        Thread.new do
+          loop do
+            client = tcp_server.accept
+            begin
+              logger.debug "accepted #{client}, reading..."
+              client.readpartial(1024)
+              logger.debug "read #{client}, writing out slow response..."
+
+              client.write([
+                "HTTP/1.1 101 Switching Protocols",
+                "Upgrade: websocket",
+                "Connection: upgrade",
+              ].join("\r\n"))
+
+              loop do
+                client.write("X-Foo: bar\r\n")
+                Thread.pass
+              end
+            ensure
+              client.close
+            end
+          end
+        end
+      end
+
+      subject { described_class.new("ws://127.0.0.1:#{port}", open_timeout: 0.1) }
+
+      it 'raises an open timeout' do
+        expect{
+          subject.run
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read (deadline expired|timeout after 0.000\d+s) while waiting 0.1s for open/)
       end
     end
 

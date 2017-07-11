@@ -15,6 +15,7 @@ class Kontena::Websocket::Client
 
   FRAME_SIZE = 4 * 1024
   CONNECT_TIMEOUT = 60.0
+  OPEN_TIMEOUT = 60.0
   WRITE_TIMEOUT = 60.0
 
   # @param [String] url
@@ -32,6 +33,7 @@ class Kontena::Websocket::Client
       ssl_ca_file: nil,
       ssl_ca_path: nil,
       connect_timeout: CONNECT_TIMEOUT,
+      open_timeout: OPEN_TIMEOUT,
       write_timeout: WRITE_TIMEOUT
   )
     @uri = URI.parse(url)
@@ -44,6 +46,7 @@ class Kontena::Websocket::Client
       verify_mode: ssl_verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE,
     }
     @connect_timeout = connect_timeout
+    @open_timeout = open_timeout
     @write_timeout = write_timeout
 
     unless @uri.scheme == 'ws' || @uri.scheme == 'wss'
@@ -155,12 +158,21 @@ class Kontena::Websocket::Client
     @driver = self.start
 
     while !@closed
-      # read and process frames with @driver @mutex held
-      self.read
+      read_timeout = self.read_timeout
+
+      if !read_timeout || read_timeout > 0
+        # read and process frames with @driver @mutex held
+        self.read(read_timeout)
+      else
+        raise Kontena::Websocket::TimeoutError, "read deadline expired"
+      end
 
       # call @queue blocks with the lock released
       self.process_queue
     end
+
+  rescue Kontena::Websocket::TimeoutError => exc
+    raise wrap_timeout_error(exc)
 
   ensure
     # ensure socket is closed and client disconnected on any of:
@@ -413,6 +425,8 @@ class Kontena::Websocket::Client
     # not expected to emit anything, not even :error
     fail unless driver.start
 
+    started!
+
     return driver
   end
 
@@ -450,15 +464,46 @@ class Kontena::Websocket::Client
     @close_reason = event.reason
   end
 
+  # Start read deadline for @open_timeout
+  def started!
+    @started_at = Time.now
+  end
+
+  # Return read deadline for current read state
+  #
+  # @return [Float]
+  def read_timeout
+    case
+    when !@open && @open_timeout
+      @started_at + @open_timeout - Time.now
+    else
+      nil
+    end
+  end
+
+  # @param exc [Kontena::Websocket::TimeoutError]
+  # @raise [Kontena::Websocket::TimeoutError] ... while waiting ... for ...
+  def wrap_timeout_error(exc)
+    case
+    when !@connection && @connect_timeout
+      exc.class.new("#{exc} while waiting #{@connect_timeout}s for connect")
+    when !@open && @open_timeout
+      exc.class.new("#{exc} while waiting #{@open_timeout}s for open")
+    else
+      exc
+    end
+  end
+
   # Read from socket, and parse websocket frames, enqueue blocks.
   # The websocket must be connected.
   #
+  # @param timeout [Flaot] seconds
   # @raise [Kontena::Websocket::SocketError]
-  def read
+  def read(timeout = nil)
     begin
-      data = @socket.readpartial(FRAME_SIZE)
+      data = @connection.read(FRAME_SIZE, timeout: timeout)
 
-    rescue EOFError, IOError => exc
+    rescue EOFError => exc
       debug "read EOF"
 
       raise Kontena::Websocket::EOFError, 'Server closed connection without sending close frame'
