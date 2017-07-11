@@ -5,6 +5,10 @@ describe Kontena::Websocket::Client do
   let(:logger) {
     Logger.new(STDERR)
   }
+  before do
+    Thread.abort_on_exception = true
+  end
+
   context "For a server that is ECONNREFUSED" do
     subject { described_class.new('ws://127.0.0.1:1337') }
 
@@ -15,9 +19,28 @@ describe Kontena::Websocket::Client do
         subject.run do
           opened = true
         end
-      }.to raise_error(Kontena::Websocket::ConnectError, 'Connection refused - connect(2) for "127.0.0.1" port 1337')
+      }.to raise_error(Kontena::Websocket::ConnectError, 'Connection refused - connect(2) for 127.0.0.1:1337')
 
       expect(opened).to be false
+    end
+  end
+
+  context "For a blackholed server" do
+    let(:url) { 'ws://192.0.2.1:1337' }
+    subject { described_class.new(url) }
+
+    context "with a short connect timeout" do
+      subject {
+        described_class.new(url,
+          connect_timeout: 0.1,
+        )
+      }
+
+      it "raises a connection timeout error" do
+        expect{
+          subject.run
+        }.to raise_error(Kontena::Websocket::TimeoutError, 'Connect timeout after 0.1s')
+      end
     end
   end
 
@@ -34,7 +57,6 @@ describe Kontena::Websocket::Client do
       tcp_server
       server_thread
     end
-
     after do
       server_thread.kill
     end
@@ -228,9 +250,9 @@ describe Kontena::Websocket::Client do
       let(:server_thread) do
         Thread.new do
           loop do
-            begin
-              socket = tcp_server.accept
+            socket = tcp_server.accept
 
+            begin
               driver = WebSocket::Driver.server(socket)
               driver.on :connect do |event|
                 if WebSocket::Driver.websocket? driver.env
@@ -257,12 +279,20 @@ describe Kontena::Websocket::Client do
                 raise event
               end
               driver.on :message do |event|
-                logger.info("websocket server message: #{event}")
-
                 case event.data
+                when 'sleep'
+                  logger.info("websocket server sleep")
+
+                  sleep 1.0
+
                 when 'close'
+                  logger.info("websocket server close")
+
                   driver.close('test', 4000)
+
                 else
+                  logger.info("websocket server echo: #{event.data[0..16]}...")
+
                   driver.text(event.data)
                 end
               end
@@ -277,6 +307,8 @@ describe Kontena::Websocket::Client do
               end
             rescue => exc
               logger.warn exc
+            ensure
+              socket.close
             end
           end
         end
@@ -325,6 +357,32 @@ describe Kontena::Websocket::Client do
         end
 
         expect(pong).to be true
+      end
+
+      context "with a short write timeout" do
+        subject {
+          described_class.new("ws://127.0.0.1:#{port}",
+            write_timeout: 0.1,
+          )
+        }
+        let(:sender_thread) do
+          Thread.new do
+            loop do
+              subject.send('spam' * 1024 * 8) # ~8KB
+            end
+          end
+        end
+
+        it 'raises a write timeout when the server blocks' do
+          expect{
+            subject.run do
+              sender_thread
+
+              # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
+              subject.send('sleep')
+            end
+          }.to raise_error(Kontena::Websocket::TimeoutError, 'write timeout after 0.1s')
+        end
       end
     end
   end

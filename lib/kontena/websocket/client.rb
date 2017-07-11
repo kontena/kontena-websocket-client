@@ -14,8 +14,8 @@ class Kontena::Websocket::Client
   attr_reader :uri
 
   FRAME_SIZE = 4 * 1024
-  CLOSE_NORMAL = 1000
-  CLOSE_ABNORMAL = 1006
+  CONNECT_TIMEOUT = 60.0
+  WRITE_TIMEOUT = 60.0
 
   # @param [String] url
   # @param headers [Hash{String => String}]
@@ -23,8 +23,17 @@ class Kontena::Websocket::Client
   # @param ssl_verify [Boolean] verify peer cert, host
   # @param ssl_ca_file [String] path to CA cert bundle file
   # @param ssl_ca_path [String] path to hashed CA cert directory
+  # @param connect_timeout [Float]
+  # @param write_timeout [Float] guarantee progress per each write syscall when sending faster than the server is receiving
   # @raise [ArgumentError] Invalid websocket URI
-  def initialize(url, headers: {}, ssl_version: :SSLv23, ssl_verify: nil, ssl_ca_file: nil, ssl_ca_path: nil)
+  def initialize(url, headers: {},
+      ssl_version: :SSLv23,
+      ssl_verify: nil,
+      ssl_ca_file: nil,
+      ssl_ca_path: nil,
+      connect_timeout: CONNECT_TIMEOUT,
+      write_timeout: WRITE_TIMEOUT
+  )
     @uri = URI.parse(url)
     @headers = headers
     @ssl_verify = ssl_verify
@@ -34,6 +43,8 @@ class Kontena::Websocket::Client
       ca_path: ssl_ca_path,
       verify_mode: ssl_verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE,
     }
+    @connect_timeout = connect_timeout
+    @write_timeout = write_timeout
 
     unless @uri.scheme == 'ws' || @uri.scheme == 'wss'
       raise ArgumentError, "Invalid websocket URL: #{@uri}"
@@ -299,10 +310,15 @@ class Kontena::Websocket::Client
 
   # Connect to TCP server.
   #
+  # @raise [Kontena::Websocket::TimeoutError] Errno::ETIMEDOUT
   # @raise [Kontena::Websocket::ConnectError] Errno::*
   # @return [TCPSocket]
   def connect_tcp
-    ::TCPSocket.new(self.host, self.port)
+    debug "connect_tcp: timeout=#{@connect_timeout}"
+
+    Socket.tcp(self.host, self.port, connect_timeout: @connect_timeout)
+  rescue Errno::ETIMEDOUT => exc
+    raise Kontena::Websocket::TimeoutError, "Connect timeout after #{@connect_timeout}s" # XXX: actual delay
   rescue SystemCallError => exc
     raise Kontena::Websocket::ConnectError, exc
   end
@@ -358,7 +374,9 @@ class Kontena::Websocket::Client
       @socket = self.connect_tcp
     end
 
-    return Connection.new(@uri, @socket)
+    return Connection.new(@uri, @socket,
+      write_timeout: @write_timeout,
+    )
   end
 
   # Create websocket driver using @connection, and send websocket handshake

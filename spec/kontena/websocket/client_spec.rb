@@ -193,7 +193,7 @@ describe Kontena::Websocket::Client do
 
   context "with a connected driver" do
     let(:socket) { instance_double(TCPSocket) }
-    let(:connection) { instance_double(Kontena::Websocket::Client) }
+    let(:connection) { instance_double(Kontena::Websocket::Client::Connection) }
     let(:driver) { instance_double(WebSocket::Driver::Client) }
 
     let(:mutex) { subject.instance_variable_get('@mutex') }
@@ -354,8 +354,8 @@ describe Kontena::Websocket::Client do
     let(:tcp_socket) { instance_double(TCPSocket) }
 
     describe '#connect_tcp' do
-      it "connects using the right host and port" do
-        expect(TCPSocket).to receive(:new).with('socket.example.com', 80).and_return(tcp_socket)
+      it "connects using the right host and port, and with a connect timeout" do
+        expect(Socket).to receive(:tcp).with('socket.example.com', 80, connect_timeout: 60.0).and_return(tcp_socket)
 
         socket = subject.connect_tcp
 
@@ -363,15 +363,29 @@ describe Kontena::Websocket::Client do
       end
     end
 
+    context 'without a connect timeout' do
+      subject { described_class.new(url, connect_timeout: nil) }
+
+      describe '#connect_tcp' do
+        it "does not use a connect timeout" do
+          expect(Socket).to receive(:tcp).with('socket.example.com', 80, connect_timeout: nil).and_return(tcp_socket)
+
+          socket = subject.connect_tcp
+
+          expect(socket).to eq tcp_socket
+        end
+      end
+    end
+
     describe '#connect' do
-      it "calls connect_tcp" do
+      it "calls connect_tcp an returns a Connection for the socket" do
         expect(subject).to receive(:connect_tcp).with(no_args).and_return(tcp_socket)
 
         connection = subject.connect
 
         expect(connection.url).to eq url
 
-        expect(tcp_socket).to receive(:write).with('asdf')
+        expect(tcp_socket).to receive(:write_nonblock).with('asdf').and_return(4)
         connection.write('asdf')
       end
     end
@@ -403,7 +417,7 @@ describe Kontena::Websocket::Client do
 
         expect(ssl_socket).to receive(:sync_close=).with(true)
         expect(ssl_socket).to receive(:hostname=).with('socket.example.com')
-        expect(ssl_socket).to receive(:connect)
+        expect(ssl_socket).to receive(:connect_nonblock)
         expect(ssl_socket).to_not receive(:post_connection_check)
 
         expect(subject.connect_ssl).to eq ssl_socket
@@ -411,14 +425,14 @@ describe Kontena::Websocket::Client do
     end
 
     describe '#connect' do
-      it "calls connect_ssl" do
+      it "calls connect_ssl and returns a Connection for the socket" do
         expect(subject).to receive(:connect_ssl).with(no_args).and_return(ssl_socket)
 
         connection = subject.connect
 
         expect(connection.url).to eq url
 
-        expect(ssl_socket).to receive(:write).with('asdf')
+        expect(ssl_socket).to receive(:write_nonblock).with('asdf').and_return(4)
         connection.write('asdf')
       end
     end
@@ -496,7 +510,7 @@ describe Kontena::Websocket::Client do
 
   describe '#run' do
     let(:socket) { instance_double(TCPSocket) }
-    let(:connection) { instance_double(Kontena::Websocket::Client) }
+    let(:connection) { instance_double(Kontena::Websocket::Client::Connection) }
     let(:driver) { instance_double(WebSocket::Driver::Client) }
 
     before do

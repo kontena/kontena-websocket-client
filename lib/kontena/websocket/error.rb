@@ -41,6 +41,11 @@ module Kontena::Websocket
 
   # Server closed connection without sending close frame
   class EOFError < SocketError
-    
+
+  end
+
+  # connect/read/write timed out
+  class TimeoutError < Error
+
   end
 end
