@@ -203,6 +203,7 @@ class Kontena::Websocket::Client
         self.read(read_timeout)
       rescue Kontena::Websocket::TimeoutError => exc
         if read_state == :ping
+          debug "ping on #{exc}"
           self.ping
         elsif read_state
           raise exc.class.new("#{exc} while waiting #{state_timeout}s for #{read_state}")
