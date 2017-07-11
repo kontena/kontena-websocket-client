@@ -4,8 +4,31 @@ require 'socket'
 require 'openssl'
 
 # Threadsafe: while the #run method is reading/parsing incoming websocket frames, the #send/#ping/#close methods
-# can be called by other threads. The #listen and #ping blocks will be called from the #run thread.
+# can be called by other threads.
+# The #run (on_open), #on_message and #on_pong blocks will be called from the #run thread.
 #
+#
+=begin example
+   def websocket_connect
+      @ws = Kontena::Websocket::Client.new(url, ...)
+      @ws.on_message do |message|
+        actor.on_message(message)
+      end
+
+      # connecting
+      @ws.run do
+        # connected
+        actor.on_open
+      end
+      actor.on_close(@ws.close_code, @ws.close_reason)
+    rescue Kontena::Websocket::Error => exc
+      actor.on_error(exc)
+    ensure
+      # disconnected
+      @ws = nil
+    end
+  end
+=end
 class Kontena::Websocket::Client
   require_relative './client/connection'
 
@@ -27,11 +50,11 @@ class Kontena::Websocket::Client
   # @param ssl_verify [Boolean] verify peer cert, host
   # @param ssl_ca_file [String] path to CA cert bundle file
   # @param ssl_ca_path [String] path to hashed CA cert directory
-  # @param connect_timeout [Float]
-  # @param open_timeout [Float] expect server open frame after start()
-  # @param ping_interval [Float] send pings every interval seconds
-  # @param ping_timeout [Float] expect pong response after timeout seconds
-  # @param close_timeout [Float] expect server close frame after close()
+  # @param connect_timeout [Float] timeout for TCP handshake; XXX: each phase of the SSL handshake
+  # @param open_timeout [Float] expect open frame after start()
+  # @param ping_interval [Float] send pings every interval seconds after previous ping
+  # @param ping_timeout [Float] expect pong frame after ping()
+  # @param close_timeout [Float] expect close frame after close()
   # @param write_timeout [Float] throttle when sending faster than the server is able to receive, fail if no progress is made
   # @raise [ArgumentError] Invalid websocket URI
   def initialize(url, headers: {},
@@ -93,6 +116,7 @@ class Kontena::Websocket::Client
   end
 
   # Connecting with SSL cert/host verification?
+  #
   # @return [Boolean]
   def ssl_verify?
     !!@ssl_verify
