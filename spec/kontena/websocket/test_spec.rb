@@ -372,6 +372,15 @@ describe Kontena::Websocket::Client do
         end
       end
 
+      subject {
+        described_class.new("ws://127.0.0.1:#{port}",
+          connect_timeout: 1.0,
+          open_timeout: 1.0,
+          close_timeout: 0.1,
+          write_timeout: 0.1,
+        )
+      }
+
       it 'is able to connect, exchange messages and close the connection' do
         opened = 0
         messages = []
@@ -417,12 +426,7 @@ describe Kontena::Websocket::Client do
         expect(pong).to be true
       end
 
-      context "with a short write timeout" do
-        subject {
-          described_class.new("ws://127.0.0.1:#{port}",
-            write_timeout: 0.1,
-          )
-        }
+      context "with a full send buffer" do
         let(:sender_thread) do
           Thread.new do
             loop do
@@ -441,6 +445,17 @@ describe Kontena::Websocket::Client do
             end
           }.to raise_error(Kontena::Websocket::TimeoutError, 'write timeout after 0.1s')
         end
+      end
+
+      it 'raises timeout on close if the server blocks' do
+        expect{
+          subject.run do
+            # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
+            subject.send('sleep')
+
+            subject.close
+          end
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.1s for close/)
       end
     end
   end

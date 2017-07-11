@@ -16,6 +16,7 @@ class Kontena::Websocket::Client
   FRAME_SIZE = 4 * 1024
   CONNECT_TIMEOUT = 60.0
   OPEN_TIMEOUT = 60.0
+  CLOSE_TIMEOUT = 60.0
   WRITE_TIMEOUT = 60.0
 
   # @param [String] url
@@ -25,6 +26,8 @@ class Kontena::Websocket::Client
   # @param ssl_ca_file [String] path to CA cert bundle file
   # @param ssl_ca_path [String] path to hashed CA cert directory
   # @param connect_timeout [Float]
+  # @param open_timeout [Float]
+  # @param close_timeout [Float]
   # @param write_timeout [Float] guarantee progress per each write syscall when sending faster than the server is receiving
   # @raise [ArgumentError] Invalid websocket URI
   def initialize(url, headers: {},
@@ -34,6 +37,7 @@ class Kontena::Websocket::Client
       ssl_ca_path: nil,
       connect_timeout: CONNECT_TIMEOUT,
       open_timeout: OPEN_TIMEOUT,
+      close_timeout: CLOSE_TIMEOUT,
       write_timeout: WRITE_TIMEOUT
   )
     @uri = URI.parse(url)
@@ -47,6 +51,7 @@ class Kontena::Websocket::Client
     }
     @connect_timeout = connect_timeout
     @open_timeout = open_timeout
+    @close_timeout = close_timeout
     @write_timeout = write_timeout
 
     unless @uri.scheme == 'ws' || @uri.scheme == 'wss'
@@ -106,11 +111,25 @@ class Kontena::Websocket::Client
     !!@socket && !!@connection && !!@driver
   end
 
+  # Client has started websocket handshake, but is not yet open.
+  #
+  # @return [Boolean]
+  def starting?
+    !!@started_at && !@open
+  end
+
   # Server has accepted websocket connection.
   #
   # @return [Boolean]
   def open?
     !!@open
+  end
+
+  # Client has sent close frame, but socket is not yet closed.
+  #
+  # @return [Boolean]
+  def closing?
+    !!@closing && !@closed
   end
 
   # Server has closed websocket connection.
@@ -285,6 +304,8 @@ class Kontena::Websocket::Client
 
     with_driver do |driver|
       fail unless driver.close(reason, code) # swapped argument order
+
+      closing!
     end
   end
 
@@ -469,13 +490,21 @@ class Kontena::Websocket::Client
     @started_at = Time.now
   end
 
+  # Start read deadline for @open_timeout
+  def closing!
+    @closing = true
+    @closing_at = Time.now
+  end
+
   # Return read deadline for current read state
   #
   # @return [Float]
   def read_timeout
     case
-    when !@open && @open_timeout
+    when starting? && @open_timeout
       @started_at + @open_timeout - Time.now
+    when closing? && @close_timeout
+      @closing_at + @close_timeout - Time.now
     else
       nil
     end
@@ -487,8 +516,10 @@ class Kontena::Websocket::Client
     case
     when !@connection && @connect_timeout
       exc.class.new("#{exc} while waiting #{@connect_timeout}s for connect")
-    when !@open && @open_timeout
+    when starting? && @open_timeout
       exc.class.new("#{exc} while waiting #{@open_timeout}s for open")
+    when closing? && @close_timeout
+      exc.class.new("#{exc} while waiting #{@close_timeout}s for close")
     else
       exc
     end

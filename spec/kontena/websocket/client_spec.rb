@@ -308,18 +308,24 @@ describe Kontena::Websocket::Client do
         expect(driver).to receive(:close).with(nil, 1000).and_return(true)
 
         subject.close
+
+        expect(subject.closing?).to be true
       end
 
       it "closes with code and reason" do
         expect(driver).to receive(:close).with("nope", 4020).and_return(true)
 
         subject.close(4020, "nope")
+
+        expect(subject.closing?).to be true
       end
 
       it "fails if driver returns false" do
         expect(driver).to receive(:close).and_return(false)
 
         expect{subject.close}.to raise_error(RuntimeError)
+
+        expect(subject.closing?).to be false
       end
     end
 
