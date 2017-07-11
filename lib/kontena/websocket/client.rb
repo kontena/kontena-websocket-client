@@ -297,15 +297,22 @@ class Kontena::Websocket::Client
     end
   end
 
-  # Send ping. Optional callback gets called from the #read thread.
+  # Register pong handler.
+  # Called from the #read thread every ping_interval after received pong.
   #
-  # If new pings are sent before old pings get any response, then the older pings do not yield on pong.
   # The ping interval should be longer than the ping timeout.
+  # If new pings are sent before old pings get any response, then the older pings do not yield on pong.
   #
   # @yield [delay] received pong
   # @yieldparam delay [Float] ping-pong delay in seconds
+  def on_pong(&block)
+    @on_pong = block
+  end
+
+  # Send ping.
+  #
   # @raise [RuntimeError] not connected
-  def ping(&block)
+  def ping
     with_driver do |driver|
       ping_id = @ping_id += 1
 
@@ -323,11 +330,11 @@ class Kontena::Websocket::Client
           debug "ping-pong with id=#{ping_id} in #{ping_delay}s"
 
           # queue to call block without @mutex held
-          enqueue { block.call(ping_delay) } if block
+          enqueue { @on_pong.call(ping_delay) } if @on_pong
         end
       end
 
-      # XXX: need to control ping interval for read timeout while waiting for pong
+      # must be called from #read loop to use the right read timeout
       pinging!
     end
   end

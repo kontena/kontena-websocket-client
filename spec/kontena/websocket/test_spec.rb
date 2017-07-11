@@ -416,19 +416,6 @@ describe Kontena::Websocket::Client do
         expect(subject.close_reason).to eq 'test'
       end
 
-      it 'gets ping responses' do
-        pong = false
-
-        subject.run do
-          subject.ping do
-            pong = true
-            subject.close
-          end
-        end
-
-        expect(pong).to be true
-      end
-
       context "with a full send buffer" do
         let(:sender_thread) do
           Thread.new do
@@ -462,7 +449,21 @@ describe Kontena::Websocket::Client do
       end
 
       context 'with a short ping interval' do
-        let(:ping_interval) { 0.5 }
+        let(:ping_interval) { 0.2 }
+
+        it 'sees ping-pong delay' do
+          ping_delay = nil
+
+          subject.on_pong do |delay|
+            ping_delay = delay
+            subject.close
+          end
+          subject.run do
+            # wait for ping
+          end
+
+          expect(ping_delay).to be > 0.0
+        end
 
         it 'raises ping timeout if the server blocks' do
           expect{

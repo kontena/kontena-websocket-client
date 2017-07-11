@@ -293,6 +293,12 @@ describe Kontena::Websocket::Client do
       end
 
       it "sends ping with callback on pong" do
+        ping_delay = nil
+
+        subject.on_pong do |delay|
+          ping_delay = delay
+        end
+
         ping_id = nil
         ping_block = nil
 
@@ -303,10 +309,7 @@ describe Kontena::Websocket::Client do
           true
         end
 
-        ping_delay = nil
-        subject.ping do |delay|
-          ping_delay = delay
-        end
+        subject.ping
 
         expect(ping_block).to_not be nil
         expect(ping_delay).to be nil
