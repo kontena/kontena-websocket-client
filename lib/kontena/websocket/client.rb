@@ -68,7 +68,6 @@ class Kontena::Websocket::Client
     @uri = URI.parse(url)
     @headers = headers
     @ssl_params = ssl_params
-    @ssl_verify =
 
     @connect_timeout = connect_timeout
     @open_timeout = open_timeout
@@ -259,20 +258,14 @@ class Kontena::Websocket::Client
     fail "not connected" unless @socket
     return nil unless ssl?
 
-    x509_verify_result = @socket.verify_result
-
-    unless x509_verify_result == OpenSSL::X509::V_OK
-      raise Kontena::Websocket::SSLVerifyError.from_verify_result(x509_verify_result)
+    unless ssl_cert = @socket.peer_cert
+      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), "Server did not send any certificate"
     end
 
-    begin
-      # checks peer cert exists, and validates CN
-      @socket.post_connection_check(self.host)
-    rescue OpenSSL::SSL::SSLError => exc
-      raise Kontena::Websocket::SSLVerifyError.new(exc.message)
-    end
+    # raises Kontena::Websocket::SSLVerifyError
+    self.ssl_verify_cert! ssl_cert
 
-    return @socket.peer_cert
+    return ssl_cert
   end
 
   # Valid once open
@@ -444,10 +437,50 @@ class Kontena::Websocket::Client
     raise Kontena::Websocket::ConnectError, exc
   end
 
+  # @return [OpenSSL::X509::Store]
+  def ssl_cert_store
+    @ssl_cert_store ||= OpenSSL::X509::Store.new.tap do |ssl_cert_store|
+      ca_file = @ssl_params[:ca_file] || ENV['SSL_CA_FILE']
+      ca_path = @ssl_params[:ca_path] || ENV['SSL_CA_PATH']
+
+      if ca_file || ca_path
+        ssl_cert_store.add_file ca_file if ca_file
+        ssl_cert_store.add_path ca_path if ca_path
+      else
+        ssl_cert_store.set_default_paths
+      end
+    end
+  end
+
+  # @param ssl_cert [OpenSSL::X509::Certificate]
+  # @raise [Kontena::Websocket::SSLVerifyError]
+  def ssl_verify_cert!(ssl_cert)
+    ssl_verify_context = OpenSSL::X509::StoreContext.new(ssl_cert_store, ssl_cert)
+
+    unless ssl_verify_context.verify
+      raise Kontena::Websocket::SSLVerifyError.new(ssl_verify_context.error), "certificate verify failed: #{ssl_verify_context.error_string}"
+    end
+
+    unless OpenSSL::SSL.verify_certificate_identity(ssl_cert, self.host)
+      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), "Server certificate did not match hostname #{self.host}: #{ssl_cert.subject}"
+    end
+  end
+
+  # @param verify_result [Integer] OpenSSL::SSL::SSLSocket#verify_result
+  # @return [Kontena::Websocket::SSLVerifyError]
+  def ssl_verify_error(verify_result)
+    ssl_verify_context = OpenSSL::X509::StoreContext.new(ssl_cert_store)
+    ssl_verify_context.error = verify_result
+
+    Kontena::Websocket::SSLVerifyError.new(ssl_verify_context.error, "certificate verify failed: #{ssl_verify_context.error_string}")
+  end
+
   # @return [OpenSSL::SSL::SSLContext]
   def ssl_context
     @ssl_context ||= OpenSSL::SSL::SSLContext.new().tap do |ssl_context|
-      ssl_context.set_params(@ssl_params)
+      ssl_context.set_params(**@ssl_params,
+        cert_store: self.ssl_cert_store,
+      )
     end
   end
 
@@ -491,18 +524,16 @@ class Kontena::Websocket::Client
     begin
       self.ssl_connect(ssl_socket)
     rescue OpenSSL::SSL::SSLError => exc
+      # SSL_connect returned=1 errno=0 state=error: certificate verify failed
       if exc.message.end_with? 'certificate verify failed'
-        raise Kontena::Websocket::SSLVerifyError.from_verify_result(ssl_socket.verify_result)
+        raise ssl_verify_error(ssl_socket.verify_result)
       else
         raise Kontena::Websocket::SSLConnectError, exc
       end
     end
 
-    begin
-      ssl_socket.post_connection_check(self.host) if ssl_verify?
-    rescue OpenSSL::SSL::SSLError => exc
-      raise Kontena::Websocket::SSLVerifyError.new(exc.message)
-    end
+    # raises Kontena::Websocket::SSLVerifyError
+    self.ssl_verify_cert!(ssl_socket.peer_cert) if ssl_verify?
 
     ssl_socket
   end

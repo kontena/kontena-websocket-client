@@ -135,7 +135,7 @@ describe Kontena::Websocket::Client do
       it 'raises an open timeout' do
         expect{
           subject.run
-        }.to raise_error(Kontena::Websocket::TimeoutError, /read (deadline expired|timeout after 0.000\d+s) while waiting 0.1s for open/)
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read (deadline expired|timeout after 0.\d+s) while waiting 0.1s for open/)
       end
     end
 
@@ -255,7 +255,7 @@ describe Kontena::Websocket::Client do
         it 'raises a SSL verify error about a self-signed cert' do
           expect{
             subject.run
-          }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT')
+          }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: self signed certificate')
         end
 
         context "with the cert configured as a CA cert" do
@@ -303,7 +303,7 @@ describe Kontena::Websocket::Client do
             it 'raises a SSL verify error about a self-signed cert' do
               expect{
                 subject.run
-              }.to raise_error(Kontena::Websocket::SSLVerifyError, 'hostname "127.0.0.1" does not match the server certificate')
+              }.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server certificate did not match hostname 127.0.0.1: /CN=localhost')
             end
           end
         end

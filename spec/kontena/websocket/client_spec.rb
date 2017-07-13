@@ -154,37 +154,49 @@ describe Kontena::Websocket::Client do
 
     let(:socket) { instance_double(OpenSSL::SSL::SSLSocket) }
     let(:cert) { instance_double(OpenSSL::X509::Certificate) }
+    let(:cert_store) { instance_double(OpenSSL::X509::Store) }
+    let(:cert_store_context) { instance_double(OpenSSL::X509::StoreContext) }
 
     before do
       subject.instance_variable_set('@socket', socket)
+
+      allow(socket).to receive(:peer_cert).and_return(cert)
+      allow(subject).to receive(:ssl_cert_store).and_return(cert_store)
+      allow(OpenSSL::X509::StoreContext).to receive(:new).with(cert_store, cert).and_return(cert_store_context)
     end
 
     describe '#ssl_cert' do
-      it "returns the peer cert" do
-        expect(socket).to receive(:peer_cert).and_return(cert)
-
+      it "returns the socket peer cert" do
         expect(subject.ssl_cert).to eq cert
       end
     end
 
     describe '#ssl_cert!' do
-      it "fails on verify result" do
-        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
+      it "fails if no peer cert" do
+        expect(socket).to receive(:peer_cert).and_return(nil)
 
-        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, "certificate verify failed: V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT")
+        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server did not send any certificate')
       end
 
-      it "fails if post_connection_check" do
-        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_OK)
-        expect(socket).to receive(:post_connection_check).and_raise(OpenSSL::SSL::SSLError, 'hostname "192.168.66.1" does not match the server certificate')
+      it "fails if the certificate does not verify" do
+        expect(cert_store_context).to receive(:verify).and_return(false)
+        expect(cert_store_context).to receive(:error).and_return(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
+        expect(cert_store_context).to receive(:error_string).and_return('self signed certificate')
 
-        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'hostname "192.168.66.1" does not match the server certificate')
+        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, "certificate verify failed: self signed certificate")
+      end
+
+      it "fails if the certificate subject does not match" do
+        expect(cert_store_context).to receive(:verify).and_return(true)
+        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).and_return(false)
+        expect(cert).to receive(:subject).and_return(OpenSSL::X509::Name.parse '/CN=test')
+
+        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server certificate did not match hostname socket.example.com: /CN=test')
       end
 
       it "returns the peer cert if valid" do
-        expect(socket).to receive(:verify_result).and_return(OpenSSL::X509::V_OK)
-        expect(socket).to receive(:post_connection_check).with('socket.example.com')
-        expect(socket).to receive(:peer_cert).and_return(cert)
+        expect(cert_store_context).to receive(:verify).and_return(true)
+        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).and_return(true)
 
         expect(subject.ssl_cert!).to eq cert
       end
@@ -495,53 +507,97 @@ describe Kontena::Websocket::Client do
     end
 
     describe '#ssl_context' do
+      let(:ssl_cert_store) { instance_double(OpenSSL::X509::Store) }
+
+      before do
+        allow(subject).to receive(:ssl_cert_store).and_return(ssl_cert_store)
+      end
+
       it "configures verify_mode" do
         ssl_context = subject.ssl_context
 
         expect(ssl_context).to be_a OpenSSL::SSL::SSLContext
         expect(ssl_context.verify_mode).to eq OpenSSL::SSL::VERIFY_PEER
-        expect(ssl_context.cert_store).to eq OpenSSL::SSL::SSLContext::DEFAULT_CERT_STORE
+        expect(ssl_context.cert_store).to eq ssl_cert_store
       end
     end
 
     describe '#connect_ssl' do
-      it "connects with SNI, and verifies" do
-        expect(OpenSSL::SSL::SSLSocket).to receive(:new).with(tcp_socket, OpenSSL::SSL::SSLContext).and_return(ssl_socket)
+      let(:ssl_cert) { instance_double(OpenSSL::X509::Certificate) }
 
+      before do
+        expect(OpenSSL::SSL::SSLSocket).to receive(:new).with(tcp_socket, OpenSSL::SSL::SSLContext).and_return(ssl_socket)
+      end
+
+      it "connects with SNI, and verifies" do
         expect(ssl_socket).to receive(:sync_close=).with(true)
         expect(ssl_socket).to receive(:hostname=).with('socket.example.com')
         expect(ssl_socket).to receive(:connect_nonblock)
-        expect(ssl_socket).to receive(:post_connection_check)
+        expect(ssl_socket).to receive(:peer_cert).and_return(ssl_cert)
+
+        expect(subject).to receive(:ssl_verify_cert!).with(ssl_cert)
 
         expect(subject.connect_ssl).to eq ssl_socket
       end
-    end
-  end
 
-  context "for a wss:// URL with ssl_ca_file" do
-    let(:url) { 'wss://socket.example.com/'}
-    subject { described_class.new(url, ssl_params: { ca_file: '/etc/kontena-agent/ca.pem' } ) }
+      it "raises SSLVerifyError on cert identity failures" do
+        expect(ssl_socket).to receive(:sync_close=).with(true)
+        expect(ssl_socket).to receive(:hostname=).with('socket.example.com')
+        expect(ssl_socket).to receive(:connect_nonblock)
+        expect(ssl_socket).to receive(:peer_cert).and_return(ssl_cert)
 
-    describe '#ssl_context' do
-      it "configures ca_file" do
-        ssl_context = subject.ssl_context
+        expect(subject).to receive(:ssl_verify_cert!).with(ssl_cert).and_raise(Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), 'Server certificate did not match hostname 127.0.0.1: /CN=localhost')
 
-        expect(ssl_context).to be_a OpenSSL::SSL::SSLContext
-        expect(ssl_context.ca_file).to eq '/etc/kontena-agent/ca.pem'
+        expect{subject.connect_ssl}.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server certificate did not match hostname 127.0.0.1: /CN=localhost')
+      end
+
+      it "raises SSLVerifyError on cert verify failures" do
+        expect(ssl_socket).to receive(:sync_close=).with(true)
+        expect(ssl_socket).to receive(:hostname=).with('socket.example.com')
+        expect(ssl_socket).to receive(:connect_nonblock).and_raise(OpenSSL::SSL::SSLError, 'SSL_connect returned=1 errno=0 state=error: certificate verify failed')
+        expect(ssl_socket).to receive(:verify_result).and_return(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
+
+        expect(subject).to receive(:ssl_verify_error).with(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT).and_return(Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT, 'certificate verify failed: self signed certificate'))
+
+        expect{subject.connect_ssl}.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: self signed certificate')
+      end
+
+      it "raises SSLConnectError on other ssl errors" do
+        expect(ssl_socket).to receive(:sync_close=).with(true)
+        expect(ssl_socket).to receive(:hostname=).with('socket.example.com')
+        expect(ssl_socket).to receive(:connect_nonblock).and_raise(OpenSSL::SSL::SSLError, 'SSL_connect returned=1 errno=0 state=error: asdfasdf')
+
+        expect{subject.connect_ssl}.to raise_error(Kontena::Websocket::SSLConnectError, 'SSL_connect returned=1 errno=0 state=error: asdfasdf')
       end
     end
   end
 
-  context "for a wss:// URL with ssl_ca_path" do
-    let(:url) { 'wss://socket.example.com/'}
-    subject { described_class.new(url, ssl_params: { ca_path: '/etc/kontena-agent/ca.d' } ) }
+  describe '#ssl_cert_store' do
+    let(:ssl_cert_store) { instance_double(OpenSSL::X509::Store) }
 
-    describe '#ssl_context' do
+    before do
+      allow(OpenSSL::X509::Store).to receive(:new).and_return(ssl_cert_store)
+    end
+
+    context "for a wss:// URL with ssl_ca_file" do
+      let(:url) { 'wss://socket.example.com/'}
+      subject { described_class.new(url, ssl_params: { ca_file: '/etc/kontena-agent/ca.pem' } ) }
+
+      it "adds the ca_file" do
+        expect(ssl_cert_store).to receive(:add_file).with('/etc/kontena-agent/ca.pem')
+
+        expect(subject.ssl_cert_store).to eq ssl_cert_store
+      end
+    end
+
+    context "for a wss:// URL with ssl_ca_path" do
+      let(:url) { 'wss://socket.example.com/'}
+      subject { described_class.new(url, ssl_params: { ca_path: '/etc/kontena-agent/ca.d' } ) }
+
       it "configures ca_path" do
-        ssl_context = subject.ssl_context
+        expect(ssl_cert_store).to receive(:add_path).with('/etc/kontena-agent/ca.d')
 
-        expect(ssl_context).to be_a OpenSSL::SSL::SSLContext
-        expect(ssl_context.ca_path).to eq '/etc/kontena-agent/ca.d'
+        expect(subject.ssl_cert_store).to eq ssl_cert_store
       end
     end
   end
