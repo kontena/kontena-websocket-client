@@ -484,27 +484,27 @@ class Kontena::Websocket::Client
   # @raise [Kontena::Websocket::SSLVerifyError]
   def ssl_verify_cert!(ssl_cert, ssl_cert_chain)
     unless ssl_cert
-      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), "No certificate"
+      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK, ssl_cert, ssl_cert_chain), "No certificate"
     end
 
     ssl_verify_context = OpenSSL::X509::StoreContext.new(ssl_cert_store, ssl_cert, ssl_cert_chain)
 
     unless ssl_verify_context.verify
-      raise Kontena::Websocket::SSLVerifyError.new(ssl_verify_context.error), "certificate verify failed: #{ssl_verify_context.error_string}"
+      raise Kontena::Websocket::SSLVerifyError.new(ssl_verify_context.error, ssl_cert, ssl_cert_chain), ssl_verify_context.error_string
     end
 
     unless OpenSSL::SSL.verify_certificate_identity(ssl_cert, self.ssl_hostname)
-      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), "Server certificate did not match hostname #{self.ssl_hostname}: #{ssl_cert.subject}"
+      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK, ssl_cert, ssl_cert_chain), "Subject does not match hostname #{self.ssl_hostname}: #{ssl_cert.subject}"
     end
   end
 
   # @param verify_result [Integer] OpenSSL::SSL::SSLSocket#verify_result
   # @return [Kontena::Websocket::SSLVerifyError]
-  def ssl_verify_error(verify_result)
+  def ssl_verify_error(verify_result, ssl_cert = nil, ssl_cert_chain = nil)
     ssl_verify_context = OpenSSL::X509::StoreContext.new(ssl_cert_store)
     ssl_verify_context.error = verify_result
 
-    Kontena::Websocket::SSLVerifyError.new(ssl_verify_context.error, "certificate verify failed: #{ssl_verify_context.error_string}")
+    Kontena::Websocket::SSLVerifyError.new(ssl_verify_context.error, ssl_cert, ssl_cert_chain, ssl_verify_context.error_string)
   end
 
   # @return [OpenSSL::SSL::SSLContext]
@@ -558,6 +558,7 @@ class Kontena::Websocket::Client
     rescue OpenSSL::SSL::SSLError => exc
       # SSL_connect returned=1 errno=0 state=error: certificate verify failed
       if exc.message.end_with? 'certificate verify failed'
+        # ssl_socket.peer_cert is not set on errors :(
         raise ssl_verify_error(ssl_socket.verify_result)
       else
         raise Kontena::Websocket::SSLConnectError, exc

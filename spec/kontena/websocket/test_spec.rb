@@ -287,7 +287,9 @@ describe Kontena::Websocket::Client do
         it 'raises a SSL verify error about a self-signed cert' do
           expect{
             subject.run
-          }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: self signed certificate')
+          }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: self signed certificate') do |error|
+            expect(error.cert).to be nil
+          end
         end
 
         context "with the cert configured as a CA cert" do
@@ -324,7 +326,7 @@ describe Kontena::Websocket::Client do
             it 'raises a SSL verify error about a self-signed cert' do
               expect{
                 subject.run
-              }.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server certificate did not match hostname 127.0.0.1: /CN=localhost')
+              }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: Subject does not match hostname 127.0.0.1: /CN=localhost')
             end
           end
 
