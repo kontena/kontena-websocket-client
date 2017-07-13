@@ -266,12 +266,10 @@ class Kontena::Websocket::Client
     fail "not connected" unless @socket
     return nil unless ssl?
 
-    ssl_cert = @socket.peer_cert
-
     # raises Kontena::Websocket::SSLVerifyError
-    self.ssl_verify_cert! ssl_cert
+    self.ssl_verify_cert! @socket.peer_cert, @socket.peer_cert_chain
 
-    return ssl_cert
+    return @socket.peer_cert
   end
 
   # Valid once open
@@ -484,12 +482,12 @@ class Kontena::Websocket::Client
 
   # @param ssl_cert [OpenSSL::X509::Certificate]
   # @raise [Kontena::Websocket::SSLVerifyError]
-  def ssl_verify_cert!(ssl_cert)
+  def ssl_verify_cert!(ssl_cert, ssl_cert_chain)
     unless ssl_cert
       raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), "No certificate"
     end
 
-    ssl_verify_context = OpenSSL::X509::StoreContext.new(ssl_cert_store, ssl_cert)
+    ssl_verify_context = OpenSSL::X509::StoreContext.new(ssl_cert_store, ssl_cert, ssl_cert_chain)
 
     unless ssl_verify_context.verify
       raise Kontena::Websocket::SSLVerifyError.new(ssl_verify_context.error), "certificate verify failed: #{ssl_verify_context.error_string}"
@@ -567,7 +565,7 @@ class Kontena::Websocket::Client
     end
 
     # raises Kontena::Websocket::SSLVerifyError
-    self.ssl_verify_cert!(ssl_socket.peer_cert) if ssl_verify?
+    self.ssl_verify_cert!(ssl_socket.peer_cert, ssl_socket.peer_cert_chain) if ssl_verify?
 
     ssl_socket
   end
