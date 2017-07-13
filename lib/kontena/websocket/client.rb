@@ -443,6 +443,7 @@ class Kontena::Websocket::Client
     raise Kontena::Websocket::ConnectError, exc
   end
 
+  # @raise [ArgumentError] Failed adding cert store file/path: ...
   # @return [OpenSSL::X509::Store]
   def ssl_cert_store
     @ssl_cert_store ||= OpenSSL::X509::Store.new.tap do |ssl_cert_store|
@@ -450,8 +451,18 @@ class Kontena::Websocket::Client
       ca_path = @ssl_params[:ca_path] || ENV['SSL_CERT_PATH']
 
       if ca_file || ca_path
-        ssl_cert_store.add_file ca_file if ca_file
-        ssl_cert_store.add_path ca_path if ca_path
+        begin
+          ssl_cert_store.add_file ca_file if ca_file
+        rescue OpenSSL::X509::StoreError
+          raise ArgumentError, "Failed adding cert store file: #{ca_file}"
+        end
+
+        begin
+          # XXX: does not actually raise
+          ssl_cert_store.add_path ca_path if ca_path
+        rescue OpenSSL::X509::StoreError
+          raise ArgumentError, "Failed adding cert store path: #{ca_path}"
+        end
       else
         ssl_cert_store.set_default_paths
       end

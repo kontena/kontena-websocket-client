@@ -9,6 +9,35 @@ describe Kontena::Websocket::Client do
     Thread.abort_on_exception = true
   end
 
+  describe '#ssl_cert_store' do
+    context "with a SSL_CERT_FILE= that does not exist" do
+      before do
+        ENV['SSL_CERT_FILE'] = './missing'
+      end
+      after do
+        ENV['SSL_CERT_FILE'] = nil
+      end
+
+      subject { described_class.new('wss://socket.example.com') }
+
+      it "raises an ArgumentError" do
+        expect{subject.ssl_cert_store}.to raise_error(ArgumentError, "Failed adding cert store file: ./missing")
+      end
+    end
+
+    context "with a ssl_params ca_path that does not exist" do
+      subject {
+        described_class.new('wss://socket.example.com',
+          ssl_params: { ca_path: './missing/' },
+        )
+      }
+
+      it "does not raise" do
+        expect{subject.ssl_cert_store}.to_not raise_error
+      end
+    end
+  end
+
   context "For a server that is ECONNREFUSED" do
     subject { described_class.new('ws://127.0.0.1:1337') }
 
