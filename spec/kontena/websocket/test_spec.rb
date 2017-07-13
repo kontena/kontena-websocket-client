@@ -38,6 +38,16 @@ describe Kontena::Websocket::Client do
     end
   end
 
+  context "For a server that does not resolve" do
+    subject { described_class.new('ws://socket.example.com') }
+
+    it 'raises' do
+      expect{
+        subject.run
+      }.to raise_error(Kontena::Websocket::ConnectError, 'getaddrinfo: Name or service not known')
+    end
+  end
+
   context "For a server that is ECONNREFUSED" do
     subject { described_class.new('ws://127.0.0.1:1337') }
 

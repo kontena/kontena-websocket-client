@@ -432,6 +432,7 @@ class Kontena::Websocket::Client
   #
   # @raise [Kontena::Websocket::TimeoutError] Errno::ETIMEDOUT
   # @raise [Kontena::Websocket::ConnectError] Errno::*
+  # @raise [Kontena::Websocket::ConnectError] SocketError
   # @return [TCPSocket]
   def connect_tcp
     debug "connect_tcp: timeout=#{@connect_timeout}"
@@ -439,6 +440,8 @@ class Kontena::Websocket::Client
     Socket.tcp(self.host, self.port, connect_timeout: @connect_timeout)
   rescue Errno::ETIMEDOUT => exc
     raise Kontena::Websocket::TimeoutError, "Connect timeout after #{@connect_timeout}s" # XXX: actual delay
+  rescue SocketError => exc
+    raise Kontena::Websocket::ConnectError, exc
   rescue SystemCallError => exc
     raise Kontena::Websocket::ConnectError, exc
   end
