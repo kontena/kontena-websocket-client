@@ -258,9 +258,7 @@ class Kontena::Websocket::Client
     fail "not connected" unless @socket
     return nil unless ssl?
 
-    unless ssl_cert = @socket.peer_cert
-      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), "Server did not send any certificate"
-    end
+    ssl_cert = @socket.peer_cert
 
     # raises Kontena::Websocket::SSLVerifyError
     self.ssl_verify_cert! ssl_cert
@@ -455,6 +453,10 @@ class Kontena::Websocket::Client
   # @param ssl_cert [OpenSSL::X509::Certificate]
   # @raise [Kontena::Websocket::SSLVerifyError]
   def ssl_verify_cert!(ssl_cert)
+    unless ssl_cert
+      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), "No certificate"
+    end
+
     ssl_verify_context = OpenSSL::X509::StoreContext.new(ssl_cert_store, ssl_cert)
 
     unless ssl_verify_context.verify

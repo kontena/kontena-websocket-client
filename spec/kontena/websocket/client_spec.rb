@@ -154,15 +154,11 @@ describe Kontena::Websocket::Client do
 
     let(:socket) { instance_double(OpenSSL::SSL::SSLSocket) }
     let(:cert) { instance_double(OpenSSL::X509::Certificate) }
-    let(:cert_store) { instance_double(OpenSSL::X509::Store) }
-    let(:cert_store_context) { instance_double(OpenSSL::X509::StoreContext) }
 
     before do
       subject.instance_variable_set('@socket', socket)
 
       allow(socket).to receive(:peer_cert).and_return(cert)
-      allow(subject).to receive(:ssl_cert_store).and_return(cert_store)
-      allow(OpenSSL::X509::StoreContext).to receive(:new).with(cert_store, cert).and_return(cert_store_context)
     end
 
     describe '#ssl_cert' do
@@ -175,28 +171,17 @@ describe Kontena::Websocket::Client do
       it "fails if no peer cert" do
         expect(socket).to receive(:peer_cert).and_return(nil)
 
-        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server did not send any certificate')
+        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'No certificate')
       end
 
       it "fails if the certificate does not verify" do
-        expect(cert_store_context).to receive(:verify).and_return(false)
-        expect(cert_store_context).to receive(:error).and_return(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
-        expect(cert_store_context).to receive(:error_string).and_return('self signed certificate')
+        expect(subject).to receive(:ssl_verify_cert!).and_raise(Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT), 'certificate verify failed: self signed certificate')
 
-        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, "certificate verify failed: self signed certificate")
-      end
-
-      it "fails if the certificate subject does not match" do
-        expect(cert_store_context).to receive(:verify).and_return(true)
-        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).and_return(false)
-        expect(cert).to receive(:subject).and_return(OpenSSL::X509::Name.parse '/CN=test')
-
-        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server certificate did not match hostname socket.example.com: /CN=test')
+        expect{subject.ssl_cert!}.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: self signed certificate')
       end
 
       it "returns the peer cert if valid" do
-        expect(cert_store_context).to receive(:verify).and_return(true)
-        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).and_return(true)
+        expect(subject).to receive(:ssl_verify_cert!)
 
         expect(subject.ssl_cert!).to eq cert
       end
@@ -567,6 +552,44 @@ describe Kontena::Websocket::Client do
 
           expect(subject.ssl_cert_store).to eq ssl_cert_store
         end
+      end
+    end
+
+    describe '#ssl_verify_cert!' do
+      let(:cert) { instance_double(OpenSSL::X509::Certificate) }
+      let(:cert_store) { instance_double(OpenSSL::X509::Store) }
+      let(:cert_store_context) { instance_double(OpenSSL::X509::StoreContext) }
+
+      before do
+        allow(subject).to receive(:ssl_cert_store).and_return(cert_store)
+        allow(OpenSSL::X509::StoreContext).to receive(:new).with(cert_store, cert).and_return(cert_store_context)
+      end
+
+      it "fails if no cert" do
+        expect{subject.ssl_verify_cert!(nil)}.to raise_error(Kontena::Websocket::SSLVerifyError, 'No certificate')
+      end
+
+      it "fails if the certificate does not verify" do
+        expect(cert_store_context).to receive(:verify).and_return(false)
+        expect(cert_store_context).to receive(:error).and_return(OpenSSL::X509::V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)
+        expect(cert_store_context).to receive(:error_string).and_return('self signed certificate')
+
+        expect{subject.ssl_verify_cert!(cert)}.to raise_error(Kontena::Websocket::SSLVerifyError, "certificate verify failed: self signed certificate")
+      end
+
+      it "fails if the certificate subject does not match" do
+        expect(cert_store_context).to receive(:verify).and_return(true)
+        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).and_return(false)
+        expect(cert).to receive(:subject).and_return(OpenSSL::X509::Name.parse '/CN=test')
+
+        expect{subject.ssl_verify_cert!(cert)}.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server certificate did not match hostname socket.example.com: /CN=test')
+      end
+
+      it "returns the peer cert if valid" do
+        expect(cert_store_context).to receive(:verify).and_return(true)
+        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).and_return(true)
+
+        expect{subject.ssl_verify_cert!(cert)}.to_not raise_error
       end
     end
 
