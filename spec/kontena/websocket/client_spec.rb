@@ -31,6 +31,7 @@ describe Kontena::Websocket::Client do
       expect(subject.scheme).to eq 'wss'
       expect(subject.ssl?).to be true
       expect(subject.ssl_verify?).to be true
+      expect(subject.ssl_hostname).to eq 'socket.example.com'
       expect(subject.host).to eq 'socket.example.com'
       expect(subject.port).to eq 443
     end
@@ -475,7 +476,8 @@ describe Kontena::Websocket::Client do
 
   context "for a wss:// URL with default verify_mode" do
     let(:url) { 'wss://socket.example.com/'}
-    subject { described_class.new(url) }
+    let(:options) { {} }
+    subject { described_class.new(url, **options) }
 
     let(:tcp_socket) { instance_double(TCPSocket) }
     let(:ssl_socket) { instance_double(OpenSSL::SSL::SSLSocket) }
@@ -579,7 +581,7 @@ describe Kontena::Websocket::Client do
 
       it "fails if the certificate subject does not match" do
         expect(cert_store_context).to receive(:verify).and_return(true)
-        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).and_return(false)
+        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).with(cert, 'socket.example.com').and_return(false)
         expect(cert).to receive(:subject).and_return(OpenSSL::X509::Name.parse '/CN=test')
 
         expect{subject.ssl_verify_cert!(cert)}.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server certificate did not match hostname socket.example.com: /CN=test')
@@ -587,9 +589,28 @@ describe Kontena::Websocket::Client do
 
       it "returns the peer cert if valid" do
         expect(cert_store_context).to receive(:verify).and_return(true)
-        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).and_return(true)
+        expect(OpenSSL::SSL).to receive(:verify_certificate_identity).with(cert, 'socket.example.com').and_return(true)
 
         expect{subject.ssl_verify_cert!(cert)}.to_not raise_error
+      end
+
+      context "with a ssl_hostname" do
+        let(:options) { { ssl_hostname: 'test' }}
+
+        it "uses the custom name for the identity check" do
+          expect(cert_store_context).to receive(:verify).and_return(true)
+          expect(OpenSSL::SSL).to receive(:verify_certificate_identity).with(cert, 'test').and_return(true)
+
+          expect{subject.ssl_verify_cert!(cert)}.to_not raise_error
+        end
+
+        it "uses the custom name for the verify error" do
+          expect(cert_store_context).to receive(:verify).and_return(true)
+          expect(OpenSSL::SSL).to receive(:verify_certificate_identity).with(cert, 'test').and_return(false)
+          expect(cert).to receive(:subject).and_return(OpenSSL::X509::Name.parse '/CN=not-test')
+
+          expect{subject.ssl_verify_cert!(cert)}.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server certificate did not match hostname test: /CN=not-test')
+        end
       end
     end
 
@@ -655,6 +676,21 @@ describe Kontena::Websocket::Client do
         expect(ssl_socket).to receive(:connect_nonblock).and_raise(OpenSSL::SSL::SSLError, 'SSL_connect returned=1 errno=0 state=error: asdfasdf')
 
         expect{subject.connect_ssl}.to raise_error(Kontena::Websocket::SSLConnectError, 'SSL_connect returned=1 errno=0 state=error: asdfasdf')
+      end
+
+      context 'with a ssl_hostname' do
+        let(:options) { { ssl_hostname: 'test' }}
+
+        it "connects and verifies using the custom name" do
+          expect(ssl_socket).to receive(:sync_close=).with(true)
+          expect(ssl_socket).to receive(:hostname=).with('test')
+          expect(ssl_socket).to receive(:connect_nonblock)
+          expect(ssl_socket).to receive(:peer_cert).and_return(ssl_cert)
+
+          expect(subject).to receive(:ssl_verify_cert!).with(ssl_cert)
+
+          expect(subject.connect_ssl).to eq ssl_socket
+        end
       end
     end
   end

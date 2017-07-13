@@ -49,6 +49,7 @@ class Kontena::Websocket::Client
   # @param ssl_params [Hash] @see OpenSSL::SSL::SSLContext
   #   The DEFAULT_PARAMS includes verify_mode: OpenSSL::SSL::VERIFY_PEER.
   #   Use { verify_mode: OpenSSL::SSL::VERIFY_NONE } to disable Kontena::Websocket::SSLVerifyError on connect.
+  # @param ssl_hostname [String] override hostname for SSL SNI, certificate identity matching
   # @param connect_timeout [Float] timeout for TCP handshake; XXX: each phase of the SSL handshake
   # @param open_timeout [Float] expect open frame after #start
   # @param ping_interval [Float] send pings every interval seconds after previous ping
@@ -58,6 +59,7 @@ class Kontena::Websocket::Client
   # @raise [ArgumentError] Invalid websocket URI
   def initialize(url, headers: {},
       ssl_params: {},
+      ssl_hostname: nil,
       connect_timeout: CONNECT_TIMEOUT,
       open_timeout: OPEN_TIMEOUT,
       ping_interval: PING_INTERVAL,
@@ -68,6 +70,7 @@ class Kontena::Websocket::Client
     @uri = URI.parse(url)
     @headers = headers
     @ssl_params = ssl_params
+    @ssl_hostname = ssl_hostname
 
     @connect_timeout = connect_timeout
     @open_timeout = open_timeout
@@ -111,6 +114,11 @@ class Kontena::Websocket::Client
   # @return [Boolean]
   def ssl_verify?
     ssl? && ssl_context.verify_mode != OpenSSL::SSL::VERIFY_NONE
+  end
+
+  # @return [String]
+  def ssl_hostname
+    @ssl_hostname || @uri.host
   end
 
   # @return [String]
@@ -463,8 +471,8 @@ class Kontena::Websocket::Client
       raise Kontena::Websocket::SSLVerifyError.new(ssl_verify_context.error), "certificate verify failed: #{ssl_verify_context.error_string}"
     end
 
-    unless OpenSSL::SSL.verify_certificate_identity(ssl_cert, self.host)
-      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), "Server certificate did not match hostname #{self.host}: #{ssl_cert.subject}"
+    unless OpenSSL::SSL.verify_certificate_identity(ssl_cert, self.ssl_hostname)
+      raise Kontena::Websocket::SSLVerifyError.new(OpenSSL::X509::V_OK), "Server certificate did not match hostname #{self.ssl_hostname}: #{ssl_cert.subject}"
     end
   end
 
@@ -517,11 +525,11 @@ class Kontena::Websocket::Client
     tcp_socket = self.connect_tcp
     ssl_context = self.ssl_context
 
-    debug "connect_ssl: #{ssl_context.inspect}"
+    debug "connect_ssl: #{ssl_context.inspect} hostname=#{self.ssl_hostname}"
 
     ssl_socket = OpenSSL::SSL::SSLSocket.new(tcp_socket, ssl_context)
     ssl_socket.sync_close = true # close TCPSocket after SSL shutdown
-    ssl_socket.hostname = self.host # SNI
+    ssl_socket.hostname = self.ssl_hostname # SNI
 
     begin
       self.ssl_connect(ssl_socket)

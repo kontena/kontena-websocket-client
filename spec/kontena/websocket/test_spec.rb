@@ -165,11 +165,8 @@ describe Kontena::Websocket::Client do
     end
 
     context "with an random SSL cert" do
-      let(:ssl_cn) do
-        'localhost'
-      end
       let(:ssl_subject) do
-        OpenSSL::X509::Name.parse "/CN=#{ssl_cn}"
+        OpenSSL::X509::Name.parse "/CN=localhost"
       end
       let(:ssl_key) do
         ssl_key = OpenSSL::PKey::RSA.new(1024)
@@ -231,14 +228,14 @@ describe Kontena::Websocket::Client do
         end
       end
 
+      let(:url) { "wss://localhost:#{port}" }
+      let(:ssl_params) { {} }
+      let(:ssl_hostname) { nil }
+
+      subject { described_class.new(url, ssl_params: ssl_params, ssl_hostname: ssl_hostname) }
+
       context "without ssl verify" do
-        subject {
-          described_class.new("wss://localhost:#{port}",
-            ssl_params: {
-              verify_mode: OpenSSL::SSL::VERIFY_NONE,
-            }
-          )
-        }
+        let(:ssl_params) { { verify_mode: OpenSSL::SSL::VERIFY_NONE } }
 
         it 'is able to connect' do
           expect{
@@ -248,10 +245,6 @@ describe Kontena::Websocket::Client do
       end
 
       context "with default ssl verify" do
-        subject {
-          described_class.new("wss://localhost:#{port}")
-        }
-
         it 'raises a SSL verify error about a self-signed cert' do
           expect{
             subject.run
@@ -266,14 +259,10 @@ describe Kontena::Websocket::Client do
             cert_file
           end
 
-          subject {
-            described_class.new("wss://localhost:#{port}",
-              ssl_params: {
-                verify_mode: OpenSSL::SSL::VERIFY_PEER,
-                ca_file: cert_file.path,
-              },
-            )
-          }
+          let(:ssl_params) { {
+              verify_mode: OpenSSL::SSL::VERIFY_PEER,
+              ca_file: cert_file.path,
+          } }
 
           before do
             cert_file
@@ -291,19 +280,27 @@ describe Kontena::Websocket::Client do
           end
 
           context 'with the wrong hostname' do
-            subject {
-              described_class.new("wss://127.0.0.1:#{port}",
-                ssl_params: {
-                  verify_mode: OpenSSL::SSL::VERIFY_PEER,
-                  ca_file: cert_file.path,
-                },
-              )
-            }
+            let(:url) { "wss://127.0.0.1:#{port}" }
 
             it 'raises a SSL verify error about a self-signed cert' do
               expect{
                 subject.run
               }.to raise_error(Kontena::Websocket::SSLVerifyError, 'Server certificate did not match hostname 127.0.0.1: /CN=localhost')
+            end
+          end
+
+          context 'with a custom CN' do
+            let(:ssl_hostname) do
+              'Test'
+            end
+            let(:ssl_subject) do
+              OpenSSL::X509::Name.parse "/C=FI/O=Test/OU=Test/CN=Test" # used by the cli Kontena::Machine::CertHelper
+            end
+
+            it 'is able to connect' do
+              expect{
+                subject.run
+              }.to raise_error(Kontena::Websocket::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
             end
           end
         end
