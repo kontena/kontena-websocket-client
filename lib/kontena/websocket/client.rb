@@ -440,8 +440,8 @@ class Kontena::Websocket::Client
   # @return [OpenSSL::X509::Store]
   def ssl_cert_store
     @ssl_cert_store ||= OpenSSL::X509::Store.new.tap do |ssl_cert_store|
-      ca_file = @ssl_params[:ca_file] || ENV['SSL_CA_FILE']
-      ca_path = @ssl_params[:ca_path] || ENV['SSL_CA_PATH']
+      ca_file = @ssl_params[:ca_file] || ENV['SSL_CERT_FILE']
+      ca_path = @ssl_params[:ca_path] || ENV['SSL_CERT_PATH']
 
       if ca_file || ca_path
         ssl_cert_store.add_file ca_file if ca_file

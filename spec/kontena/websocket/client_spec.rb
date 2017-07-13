@@ -506,6 +506,70 @@ describe Kontena::Websocket::Client do
       expect(subject.ssl_verify?).to be true
     end
 
+    describe '#ssl_cert_store' do
+      let(:ssl_cert_store) { instance_double(OpenSSL::X509::Store) }
+
+      before do
+        allow(OpenSSL::X509::Store).to receive(:new).and_return(ssl_cert_store)
+      end
+
+      it 'uses the default paths' do
+        expect(ssl_cert_store).to receive(:set_default_paths)
+
+        expect(subject.ssl_cert_store).to eq ssl_cert_store
+      end
+
+      context "with ssl_ca_file" do
+        subject { described_class.new(url, ssl_params: { ca_file: '/etc/kontena-agent/ca.pem' } ) }
+
+        it "adds the ca_file" do
+          expect(ssl_cert_store).to receive(:add_file).with('/etc/kontena-agent/ca.pem')
+
+          expect(subject.ssl_cert_store).to eq ssl_cert_store
+        end
+      end
+
+      context "with ssl_ca_path" do
+        subject { described_class.new(url, ssl_params: { ca_path: '/etc/kontena-agent/ca.d' } ) }
+
+        it "configures ca_path" do
+          expect(ssl_cert_store).to receive(:add_path).with('/etc/kontena-agent/ca.d')
+
+          expect(subject.ssl_cert_store).to eq ssl_cert_store
+        end
+      end
+
+      context "with SSL_CERT_FILE=" do
+        before do
+          ENV['SSL_CERT_FILE'] = '/etc/kontena-agent/ca.pem'
+        end
+        after do
+          ENV['SSL_CERT_FILE'] = nil
+        end
+
+        it "adds the ca_file" do
+          expect(ssl_cert_store).to receive(:add_file).with('/etc/kontena-agent/ca.pem')
+
+          expect(subject.ssl_cert_store).to eq ssl_cert_store
+        end
+      end
+
+      context "with SSL_CERT_PATH=" do
+        before do
+          ENV['SSL_CERT_PATH'] = '/etc/kontena-agent/ca.d'
+        end
+        after do
+          ENV['SSL_CERT_PATH'] = nil
+        end
+
+        it "adds the ca_file" do
+          expect(ssl_cert_store).to receive(:add_path).with('/etc/kontena-agent/ca.d')
+
+          expect(subject.ssl_cert_store).to eq ssl_cert_store
+        end
+      end
+    end
+
     describe '#ssl_context' do
       let(:ssl_cert_store) { instance_double(OpenSSL::X509::Store) }
 
@@ -568,36 +632,6 @@ describe Kontena::Websocket::Client do
         expect(ssl_socket).to receive(:connect_nonblock).and_raise(OpenSSL::SSL::SSLError, 'SSL_connect returned=1 errno=0 state=error: asdfasdf')
 
         expect{subject.connect_ssl}.to raise_error(Kontena::Websocket::SSLConnectError, 'SSL_connect returned=1 errno=0 state=error: asdfasdf')
-      end
-    end
-  end
-
-  describe '#ssl_cert_store' do
-    let(:ssl_cert_store) { instance_double(OpenSSL::X509::Store) }
-
-    before do
-      allow(OpenSSL::X509::Store).to receive(:new).and_return(ssl_cert_store)
-    end
-
-    context "for a wss:// URL with ssl_ca_file" do
-      let(:url) { 'wss://socket.example.com/'}
-      subject { described_class.new(url, ssl_params: { ca_file: '/etc/kontena-agent/ca.pem' } ) }
-
-      it "adds the ca_file" do
-        expect(ssl_cert_store).to receive(:add_file).with('/etc/kontena-agent/ca.pem')
-
-        expect(subject.ssl_cert_store).to eq ssl_cert_store
-      end
-    end
-
-    context "for a wss:// URL with ssl_ca_path" do
-      let(:url) { 'wss://socket.example.com/'}
-      subject { described_class.new(url, ssl_params: { ca_path: '/etc/kontena-agent/ca.d' } ) }
-
-      it "configures ca_path" do
-        expect(ssl_cert_store).to receive(:add_path).with('/etc/kontena-agent/ca.d')
-
-        expect(subject.ssl_cert_store).to eq ssl_cert_store
       end
     end
   end
