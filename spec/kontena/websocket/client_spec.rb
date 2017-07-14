@@ -291,7 +291,7 @@ describe Kontena::Websocket::Client do
       end
 
       it "sends ping with next id" do
-        expect(driver).to receive(:ping).with('6').and_return(true)
+        expect(driver).to receive(:ping).with(String).and_return(true)
 
         subject.ping
       end

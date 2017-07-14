@@ -90,7 +90,6 @@ class Kontena::Websocket::Client
     @queue = []
 
     # sequential ping-pongs
-    @ping_id = 0
     @ping_at = Time.now # fake for first ping_interval
   end
 
@@ -332,28 +331,26 @@ class Kontena::Websocket::Client
   # @raise [RuntimeError] not connected
   def ping
     with_driver do |driver|
-      ping_id = @ping_id += 1
+      # must be called from #read loop to use the right read timeout
+      ping_at = pinging!
 
-      debug "pinging with id=#{ping_id}"
+      debug "pinging at #{ping_at}"
 
-      fail unless driver.ping(ping_id.to_s) do
-        debug "pong with id=#{ping_id}"
+      fail unless driver.ping(ping_at.utc.to_s) do
+        debug "pong for #{ping_at}"
 
         # resolve ping timeout, unless this pong is late and we already sent a new one
         # called with @mutex held
-        if ping_id == @ping_id
-          pinged!
-          ping_delay = @ping_delay
+        if ping_at == @ping_at
+          ping_delay = pinged!
 
-          debug "ping-pong with id=#{ping_id} in #{ping_delay}s"
+          debug "ping-pong at #{ping_at} in #{ping_delay}s"
 
           # queue to call block without @mutex held
           enqueue { @on_pong.call(ping_delay) } if @on_pong
         end
       end
 
-      # must be called from #read loop to use the right read timeout
-      pinging!
     end
   end
 
@@ -667,17 +664,24 @@ class Kontena::Websocket::Client
   end
 
   # Start read deadline for @ping_timeout
+  #
+  # @return [Time] ping at
   def pinging!
     @pinging = true
     @ping_at = Time.now
     @pong_at = nil
+
+    @ping_at
   end
 
   # Stop read deadline for @ping_timeout
+  # @return [Float] ping delay
   def pinged!
     @pinging = false
     @pong_at = Time.now
     @ping_delay = @pong_at - @ping_at
+
+    @ping_delay
   end
 
   # Start read deadline for @open_timeout
