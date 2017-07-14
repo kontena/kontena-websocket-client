@@ -41,6 +41,7 @@ class Kontena::Websocket::Client
   OPEN_TIMEOUT = 60.0
   PING_INTERVAL = 60.0
   PING_TIMEOUT = 10.0
+  PING_STRFTIME = '%FT%T.%NZ' # high-percision RFC 3339
   CLOSE_TIMEOUT = 60.0
   WRITE_TIMEOUT = 60.0
 
@@ -336,7 +337,7 @@ class Kontena::Websocket::Client
 
       debug "pinging at #{ping_at}"
 
-      fail unless driver.ping(ping_at.utc.to_s) do
+      fail unless driver.ping(ping_at.utc.strftime(PING_STRFTIME)) do
         debug "pong for #{ping_at}"
 
         # resolve ping timeout, unless this pong is late and we already sent a new one
