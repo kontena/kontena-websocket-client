@@ -500,6 +500,35 @@ describe Kontena::Websocket::Client do
     end
 
     describe '#ssl_cert_store' do
+      context "with a SSL_CERT_FILE= that does not exist" do
+        before do
+          ENV['SSL_CERT_FILE'] = './missing'
+        end
+        after do
+          ENV['SSL_CERT_FILE'] = nil
+        end
+
+        subject { described_class.new('wss://socket.example.com') }
+
+        it "raises an ArgumentError" do
+          expect{subject.ssl_cert_store}.to raise_error(ArgumentError, "Failed adding cert store file: ./missing")
+        end
+      end
+
+      context "with a ssl_params ca_path that does not exist" do
+        subject {
+          described_class.new('wss://socket.example.com',
+            ssl_params: { ca_path: './missing/' },
+          )
+        }
+
+        it "does not raise" do
+          expect{subject.ssl_cert_store}.to_not raise_error
+        end
+      end
+    end
+
+    describe '#ssl_cert_store mock' do
       let(:ssl_cert_store) { instance_double(OpenSSL::X509::Store) }
 
       before do
