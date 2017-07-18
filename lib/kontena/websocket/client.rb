@@ -727,7 +727,7 @@ class Kontena::Websocket::Client
       # client sent close, server responded with close
       return true
     else
-      raise Kontena::Websocket::CloseError.new(@closed_code), @closed_reason
+      raise Kontena::Websocket::CloseError.new(@closed_code, @closed_reason)
     end
   end
 

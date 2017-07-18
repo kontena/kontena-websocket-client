@@ -59,11 +59,12 @@ module Kontena::Websocket
 
   # server closed connection
   class CloseError < Error
-    attr_reader :code
+    attr_reader :code, :reason
 
     def initialize(code, reason = nil)
       super(reason)
       @code = code
+      @reason = reason
     end
 
     def to_s
