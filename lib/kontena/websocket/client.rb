@@ -223,17 +223,9 @@ class Kontena::Websocket::Client
   # @raise [Kontena::Websocket::TimeoutError]
   # @return once websocket is open
   def connect
-    if ssl?
-      @socket = self.connect_ssl
-    else
-      @socket = self.connect_tcp
-    end
+    @connection = self.socket_connect
 
-    @connection = Connection.new(@uri, @socket,
-      write_timeout: @write_timeout,
-    )
-
-    @driver = self.open(@connection)
+    @driver = self.websocket_open(@connection)
 
     # blocks
     self.websocket_read until @open
@@ -604,14 +596,27 @@ class Kontena::Websocket::Client
     ssl_socket
   end
 
+  # @return [Connection]
+  def socket_connect
+    if ssl?
+      @socket = self.connect_ssl
+    else
+      @socket = self.connect_tcp
+    end
+
+    return Connection.new(@uri, @socket,
+      write_timeout: @write_timeout,
+    )
+  end
+
   # Create websocket driver using connection, and send websocket handshake.
   # Registers driver handlers to set @open, @closed states, enqueue messages, or raise errors.
   #
   # @param connection [Kontena::Websocket::Client::Connection]
   # @raise [RuntimeError] already started?
   # @return [WebSocket::Driver::Client]
-  def open(connection)
-    debug "open..."
+  def websocket_open(connection)
+    debug "websocket open..."
 
     driver = ::WebSocket::Driver.client(connection)
 

@@ -65,16 +65,65 @@ describe Kontena::Websocket::Client do
     end
   end
 
-  context "with a connection" do
+  context "with a connecting client" do
     let(:socket) { instance_double(TCPSocket) }
     let(:connection) { instance_double(Kontena::Websocket::Client::Connection) }
 
     before do
-      subject.instance_variable_set('@socket', socket)
-      subject.instance_variable_set('@connection', connection)
+      allow(subject).to receive(:socket_connect) do
+        subject.instance_variable_set('@socket', socket)
+        connection
+      end
     end
 
-    describe '#start' do
+    describe '#connect' do
+      let(:driver) { instance_double(WebSocket::Driver::Client) }
+
+      it 'disconnects if websocket open fails' do
+        expect(subject).to receive(:websocket_open).with(connection) do
+          fail 'open error'
+        end
+
+        expect(subject).to_not receive(:websocket_read)
+        expect(subject).to receive(:disconnect)
+
+        expect{subject.connect}.to raise_error(RuntimeError, 'open error')
+      end
+
+      it 'disconnects if websocket read fails' do
+        expect(subject).to receive(:websocket_open).with(connection) do
+          driver
+        end
+
+        expect(subject).to receive(:websocket_read) do
+          fail 'read error'
+        end
+        expect(subject).to receive(:disconnect)
+
+        expect{subject.connect}.to raise_error(RuntimeError, 'read error')
+      end
+
+      it 'connects socket, opens websocket, and reads until open' do
+        expect(subject).to receive(:websocket_open).with(connection) do
+          driver
+        end
+
+        expect(subject).to receive(:websocket_read)
+        expect(subject).to receive(:websocket_read) do
+          subject.opened!
+        end
+
+        expect(subject).to_not receive(:disconnect)
+
+        subject.connect
+      end
+    end
+  end
+
+  context "with a connection" do
+    let(:connection) { instance_double(Kontena::Websocket::Client::Connection) }
+
+    describe '#websocket_open' do
       let(:driver) { instance_double(WebSocket::Driver::Client) }
 
       it "registers callbacks and starts the handshake" do
@@ -86,7 +135,7 @@ describe Kontena::Websocket::Client do
         expect(driver).to receive(:on).with(:close)
         expect(driver).to receive(:start).and_return(true)
 
-        expect(subject.start).to eq driver
+        expect(subject.websocket_open(connection)).to eq driver
       end
 
       it "fails if driver start does" do
@@ -98,7 +147,7 @@ describe Kontena::Websocket::Client do
         expect(driver).to receive(:on).with(:close)
         expect(driver).to receive(:start).and_return(false)
 
-        expect{subject.start}.to raise_error(RuntimeError)
+        expect{subject.websocket_open(connection)}.to raise_error(RuntimeError)
       end
     end
 
@@ -108,7 +157,7 @@ describe Kontena::Websocket::Client do
         allow(connection).to receive(:url).and_return(subject.url)
         allow(connection).to receive(:write)
 
-        driver = subject.start
+        driver = subject.websocket_open(connection)
 
         subject.instance_variable_set('@driver', driver)
       end
@@ -127,16 +176,13 @@ describe Kontena::Websocket::Client do
         }.to change{subject.open?}.from(false).to(true)
       end
 
-      it "registers a message callback that pushes to @queue" do
-        message = nil
-        subject.on_message do |m|
-          message = m
-        end
+      it "registers a message callback that pushes to @message_queue" do
+        message_queue = subject.instance_variable_get('@message_queue')
 
-        expect{
-          driver.emit(:message, double(data: 'test'))
-          subject.process_queue
-        }.to change{message}.from(nil).to('test')
+        driver.emit(:message, double(data: 'test 1'))
+        driver.emit(:message, double(data: 'test 2'))
+
+        expect(message_queue).to eq ['test 1', 'test 2']
       end
 
       it "registers an close callback that sets @closed" do
@@ -260,6 +306,10 @@ describe Kontena::Websocket::Client do
       end
     end
 
+    describe '#read' do
+      # TODO
+    end
+
     describe '#send' do
       it "fails with invalid type" do
         expect{subject.send(false)}.to raise_error ArgumentError, "Invalid type: FalseClass"
@@ -319,7 +369,6 @@ describe Kontena::Websocket::Client do
         expect(ping_delay).to be nil
 
         ping_block.call
-        subject.process_queue
 
         expect(ping_delay).to_not be nil
         expect(ping_delay).to be > 0.0
@@ -358,14 +407,14 @@ describe Kontena::Websocket::Client do
       end
     end
 
-    describe '#read' do
+    describe '#websocket_read' do
       it "reads from socket and passes it to locked driver for parsing" do
-        expect(connection).to receive(:read).with(Integer, timeout: nil).and_return('asdf')
+        expect(connection).to receive(:read).with(Integer, timeout: Float).and_return('asdf')
         expect(driver).to receive(:parse).with('asdf') do
           expect(mutex).to be_locked.and be_owned
         end
 
-        subject.read
+        subject.websocket_read
       end
     end
 
@@ -412,11 +461,11 @@ describe Kontena::Websocket::Client do
       end
     end
 
-    describe '#connect' do
+    describe '#socket_connect' do
       it "calls connect_tcp an returns a Connection for the socket" do
         expect(subject).to receive(:connect_tcp).with(no_args).and_return(tcp_socket)
 
-        connection = subject.connect
+        connection = subject.socket_connect
 
         expect(connection.url).to eq url
 
@@ -466,11 +515,11 @@ describe Kontena::Websocket::Client do
       end
     end
 
-    describe '#connect' do
+    describe '#socket_connect' do
       it "calls connect_ssl and returns a Connection for the socket" do
         expect(subject).to receive(:connect_ssl).with(no_args).and_return(ssl_socket)
 
-        connection = subject.connect
+        connection = subject.socket_connect
 
         expect(connection.url).to eq url
 
@@ -735,67 +784,37 @@ describe Kontena::Websocket::Client do
     end
   end
 
-  describe '#run' do
+  describe '#self.connect' do
+    subject { instance_double(described_class) }
+
     let(:socket) { instance_double(TCPSocket) }
     let(:connection) { instance_double(Kontena::Websocket::Client::Connection) }
     let(:driver) { instance_double(WebSocket::Driver::Client) }
 
     before do
-      allow(subject).to receive(:connect) do
-        subject.instance_variable_set('@socket', socket)
-        connection
-      end
-      allow(subject).to receive(:start) do
-        subject.started!
+      allow(described_class).to receive(:new).and_return(subject)
+    end
 
-        driver
+    it "connects the client before yielding, and then disconnects" do
+      expect(subject).to receive(:connect)
+      expect(subject).to receive(:disconnect)
+      expect{|block| described_class.connect('ws://socket.example.com', &block)}.to yield_with_args(subject)
+    end
+
+    it "connects the client before yielding, and then disconnects" do
+      expect(subject).to receive(:connect)
+      expect(subject).to receive(:disconnect)
+      expect{|block| described_class.connect('ws://socket.example.com', &block)}.to yield_with_args(subject) do
+        raise Kontena::Websocket::Error, 'test'
       end
     end
 
-    it "calls open block once, processes messages, and raises on close" do
-      opened = messages = 0
-      subject.on_message do |message|
-        messages += 1
-      end
-
-      expect(connection).to receive(:read).with(Integer, timeout: Float).and_return('foo')
-      expect(driver).to receive(:parse).with('foo') do
-        subject.on_driver_open double()
-      end
-
-      expect(connection).to receive(:read).with(Integer, timeout: Float).and_return('bar')
-      expect(driver).to receive(:parse).with('bar') do
-        subject.on_driver_message double(data: 'data')
-      end
-
-      expect(connection).to receive(:read).with(Integer, timeout: Float).and_raise(EOFError)
-
-      expect(socket).to receive(:close)
+    it 'does not disconnect on close errors' do
+      expect(subject).to receive(:connect).and_raise(Kontena::Websocket::ConnectError, 'failed to connect')
+      expect(subject).to_not receive(:disconnect)
 
       expect{
-        subject.run do
-          opened += 1
-        end
-      }.to raise_error(Kontena::Websocket::EOFError)
-
-      expect(opened).to eq 1
-      expect(messages).to eq 1
-    end
-
-    it 'closes the socket on errors' do
-      expect(subject).to receive(:start).and_raise(ArgumentError, 'something went wrong')
-      expect(socket).to receive(:close)
-
-      expect{
-        subject.run
-      }.to raise_error(ArgumentError)
-    end
-
-    it 'survives errors' do
-      expect(subject).to receive(:connect).and_raise(Kontena::Websocket::ConnectError)
-
-      expect{
-        subject.run
+        described_class.connect('ws://socket.example.com').to_not yield_control
       }.to raise_error(Kontena::Websocket::ConnectError)
     end
   end
