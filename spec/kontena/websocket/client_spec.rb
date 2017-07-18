@@ -307,7 +307,64 @@ describe Kontena::Websocket::Client do
     end
 
     describe '#read' do
-      # TODO
+      context 'with a closed websocket with queued messages' do
+        before do
+          subject.on_driver_message double(data: 'test 1')
+          subject.on_driver_message double(data: 'test 2')
+          subject.closed!
+        end
+
+        it 'returns queued messages' do
+          expect(subject.read).to eq 'test 1'
+          expect(subject.read).to eq 'test 2'
+          expect(subject.read).to be nil
+        end
+
+        it 'yields queued messages' do
+          expect{|block| subject.read(&block) }.to yield_successive_args 'test 1', 'test 2'
+        end
+      end
+
+      context 'with queued messags' do
+        before do
+          subject.on_driver_message double(data: 'test 1')
+          subject.on_driver_message double(data: 'test 2')
+        end
+
+        it 'returns queued messages, before reading more' do
+          expect(subject.read).to eq 'test 1'
+          expect(subject.read).to eq 'test 2'
+
+          expect(subject).to receive(:websocket_read) do
+            subject.on_driver_message double(data: 'test 3')
+          end
+
+          expect(subject.read).to eq 'test 3'
+        end
+
+        it 'yields queued messages, before reading more' do
+          i = 0
+
+          subject.read do |msg|
+            case i += 1
+            when 1
+              expect(msg).to eq 'test 1'
+            when 2
+              expect(msg).to eq 'test 2'
+              expect(subject).to receive(:websocket_read) do
+                subject.on_driver_message double(data: 'test 3')
+              end
+            when 3
+              expect(msg).to eq 'test 3'
+              expect(subject).to receive(:websocket_read) do
+                subject.closed!
+              end
+            end
+          end
+
+          expect(i).to eq 3
+        end
+      end
     end
 
     describe '#send' do
@@ -415,6 +472,31 @@ describe Kontena::Websocket::Client do
         end
 
         subject.websocket_read
+      end
+
+      context 'while opening' do
+        before do
+          subject.opening!
+        end
+
+        it "reraises timeout with open state" do
+          expect(subject).to receive(:socket_read).and_raise(Kontena::Websocket::TimeoutError, 'read timeout after 0.1s')
+
+          expect{subject.websocket_read}.to raise_error(Kontena::Websocket::TimeoutError, 'read timeout after 0.1s while waiting 60.0s for open')
+        end
+      end
+
+      context 'while open' do
+        before do
+          subject.opened!
+        end
+
+        it "sends ping on timeout" do
+          expect(subject).to receive(:socket_read).and_raise(Kontena::Websocket::TimeoutError)
+          expect(subject).to receive(:ping)
+
+          subject.websocket_read
+        end
       end
     end
 
