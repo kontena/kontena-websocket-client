@@ -392,7 +392,7 @@ class Kontena::Websocket::Client
     end
   end
 
-#protected XXX: called by specs
+#protected XXX: called by specs TODO: refactor out to separate TCP/SSL client classes
 
   # Call into driver with locked Mutex
   #
