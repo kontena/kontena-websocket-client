@@ -149,8 +149,9 @@ class Kontena::Websocket::Client
   # Client has started websocket handshake, but is not yet open.
   #
   # @return [Boolean]
-  def starting?
-    !!@started_at && !@open
+  def opening?
+    # XXX: also true after disconnect
+    !!@opening_at && !@open
   end
 
   # Server has accepted websocket connection.
@@ -207,8 +208,7 @@ class Kontena::Websocket::Client
   def run(&block)
     @on_open = block
 
-    @connection = self.connect
-    @driver = self.start
+    self.connect
 
     while !@closed
       read_state, state_start, state_timeout = self.read_state_timeout
@@ -246,6 +246,25 @@ class Kontena::Websocket::Client
     self.disconnect
   end
 
+  # Create @socket, @connection and open @driver
+  #
+  # @raise [Kontena::Websocket::ConnectError]
+  # @raise [Kontena::Websocket::TimeoutError]
+  # @return [Connection]
+  def connect
+    if ssl?
+      @socket = self.connect_ssl
+    else
+      @socket = self.connect_tcp
+    end
+
+    @connection = Connection.new(@uri, @socket,
+      write_timeout: @write_timeout,
+    )
+
+    @driver = self.open(@connection)
+  end
+
   # @raise [RuntimeError] not connected
   # @return [nil] not an ssl connection, or no peer cert
   # @return [OpenSSL::X509::Certificate]
@@ -274,6 +293,7 @@ class Kontena::Websocket::Client
 
   # Valid once open
   #
+  # @raise [RuntimeError] not connected
   # @return [Integer]
   def http_status
     with_driver do |driver|
@@ -283,6 +303,7 @@ class Kontena::Websocket::Client
 
   # Valid once open
   #
+  # @raise [RuntimeError] not connected
   # @return [Websocket::Driver::Headers]
   def http_headers
     with_driver do |driver|
@@ -569,31 +590,14 @@ class Kontena::Websocket::Client
     ssl_socket
   end
 
-  # Create @socket and return connection wrapper.
-  #
-  # @raise [Kontena::Websocket::ConnectError]
-  # @raise [Kontena::Websocket::TimeoutError]
-  # @return [Connection]
-  def connect
-    if ssl?
-      @socket = self.connect_ssl
-    else
-      @socket = self.connect_tcp
-    end
-
-    return Connection.new(@uri, @socket,
-      write_timeout: @write_timeout,
-    )
-  end
-
-  # Create websocket driver using @connection, and send websocket handshake
-  # Must be connected.
+  # Create websocket driver using connection, and send websocket handshake.
   # Registers driver handlers to set @open, @closed states, enqueue messages, or raise errors.
   #
+  # @param connection [Kontena::Websocket::Client::Connection]
   # @raise [RuntimeError] already started?
   # @return [WebSocket::Driver::Client]
-  def start
-    driver = ::WebSocket::Driver.client(@connection)
+  def open(connection)
+    driver = ::WebSocket::Driver.client(connection)
 
     @headers.each do |k, v|
       driver.set_header(k, v)
@@ -620,7 +624,7 @@ class Kontena::Websocket::Client
     # not expected to emit anything, not even :error
     fail unless driver.start
 
-    started! # start @open_timeout
+    opening!
 
     return driver
   end
@@ -638,7 +642,7 @@ class Kontena::Websocket::Client
   #
   # @param event [WebSocket::Driver::OpenEvent] no attrs
   def on_driver_open(event)
-    @open = true
+    opened!
     enqueue { @on_open.call } if @on_open
   end
 
@@ -660,8 +664,13 @@ class Kontena::Websocket::Client
   end
 
   # Start read deadline for @open_timeout
-  def started!
-    @started_at = Time.now
+  def opening!
+    @opening_at = Time.now
+  end
+
+  # opened
+  def opened!
+    @open = true
   end
 
   # Start read deadline for @ping_timeout
@@ -693,11 +702,11 @@ class Kontena::Websocket::Client
 
   # Return read deadline for current read state
   #
-  # @return [Symbol, Float, Float] state, time, timeout
+  # @return [Symbol, Float, Float] state, at, timeout
   def read_state_timeout
     case
-    when starting? && @open_timeout
-      [:open, @started_at, @open_timeout]
+    when opening? && @open_timeout
+      [:open, @opening_at, @open_timeout]
     when pinging? && @ping_timeout
       [:pong, @ping_at, @ping_timeout]
     when closing? && @close_timeout
