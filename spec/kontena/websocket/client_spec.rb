@@ -117,6 +117,22 @@ describe Kontena::Websocket::Client do
 
         subject.connect
       end
+
+      it 'returns even if server closes right after opening' do
+        expect(subject).to receive(:websocket_open).with(connection) do
+          driver
+        end
+
+        expect(subject).to receive(:websocket_read)
+        expect(subject).to receive(:websocket_read) do
+          subject.opened!
+          subject.closed! 1005, 'test'
+        end
+
+        expect(subject).to_not receive(:disconnect)
+
+        subject.connect
+      end
     end
   end
 
@@ -307,11 +323,12 @@ describe Kontena::Websocket::Client do
     end
 
     describe '#read' do
-      context 'with a closed websocket with queued messages' do
+      context 'with a closing websocket with queued messages' do
         before do
+          subject.closing! 1005
           subject.on_driver_message double(data: 'test 1')
           subject.on_driver_message double(data: 'test 2')
-          subject.closed!
+          subject.on_driver_close double(code: 1005, reason: 'test')
         end
 
         it 'returns queued messages' do
@@ -322,6 +339,24 @@ describe Kontena::Websocket::Client do
 
         it 'yields queued messages' do
           expect{|block| subject.read(&block) }.to yield_successive_args 'test 1', 'test 2'
+        end
+      end
+
+      context 'with a closed websocket with queued messages' do
+        before do
+          subject.on_driver_message double(data: 'test 1')
+          subject.on_driver_message double(data: 'test 2')
+          subject.on_driver_close double(code: 1005, reason: 'test')
+        end
+
+        it 'returns queued messages before failing with CloseError' do
+          expect(subject.read).to eq 'test 1'
+          expect(subject.read).to eq 'test 2'
+          expect{subject.read}.to raise_error(Kontena::Websocket::CloseError, 'connection closed with code 1005: test')
+        end
+
+        it 'yields queued messages' do
+          expect{|block| subject.read(&block) }.to yield_successive_args('test 1', 'test 2').and raise_error(Kontena::Websocket::CloseError, 'connection closed with code 1005: test')
         end
       end
 
@@ -354,10 +389,11 @@ describe Kontena::Websocket::Client do
               expect(subject).to receive(:websocket_read) do
                 subject.on_driver_message double(data: 'test 3')
               end
+              subject.closing! 1005
             when 3
               expect(msg).to eq 'test 3'
               expect(subject).to receive(:websocket_read) do
-                subject.closed!
+                subject.closed! 1005, 'test'
               end
             end
           end

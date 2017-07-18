@@ -52,13 +52,29 @@ module Kontena::Websocket
 
   end
 
-  # Server closed connection without sending close frame
-  class EOFError < SocketError
-
-  end
-
   # connect/read/write timed out
   class TimeoutError < Error
 
+  end
+
+  # server closed connection
+  class CloseError < Error
+    attr_reader :code
+
+    def initialize(code, reason = nil)
+      super(reason)
+      @code = code
+    end
+
+    def to_s
+      "connection closed with code #{@code}: #{super}"
+    end
+  end
+
+  # Server closed connection without sending close frame
+  class EOFError < CloseError
+    def initialize(message = nil)
+      super(1006, message)
+    end
   end
 end

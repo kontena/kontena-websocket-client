@@ -201,18 +201,18 @@ class Kontena::Websocket::Client
     !!@closed
   end
 
-  # Valid once #run returns, when closed?
+  # Valid once #run returns, when closed? or closing?
   #
   # @return [Integer]
   def close_code
-    @close_code
+    @closed_code || @closing_code
   end
 
   # Valid once #run returns, when closed?
   #
   # @return [String]
   def close_reason
-    @close_reason
+    @closed_reason
   end
 
   # Create @socket, @connection and open @driver.
@@ -228,7 +228,7 @@ class Kontena::Websocket::Client
     @driver = self.websocket_open(@connection)
 
     # blocks
-    self.websocket_read until @open
+    self.websocket_read until @opened
 
   rescue
     disconnect
@@ -285,37 +285,13 @@ class Kontena::Websocket::Client
   #
   # If a block is given, then this loops and yields messages until closed.
   # Otherwise, returns the next message, or nil if closed.
+  #
+  # @raise [Kontena::Websocket::CloseError]
   def read(&block)
     if block
       read_yield(&block)
     else
       read_return
-    end
-  end
-
-  # @return [String, Array<Integer>] nil when websocket closed
-  def read_return
-    while !@closed && @message_queue.empty?
-      self.websocket_read
-    end
-
-    # returns nil if @closed, once the message queue is empty
-    return @message_queue.shift
-  end
-
-  # @yield [message] received websocket message payload
-  # @yieldparam message [String, Array<integer>] text or binary
-  # @return websocket closed
-  def read_yield
-    loop do
-      while msg = @message_queue.shift
-        yield msg
-      end
-
-      # drain queue before returning on close
-      return if @closed
-
-      self.websocket_read
     end
   end
 
@@ -413,12 +389,12 @@ class Kontena::Websocket::Client
   # @param close [Integer]
   # @param reason [String]
   def close(code = 1000, reason = nil)
-    debug "close"
+    debug "close code=#{code}: #{reason}"
 
     with_driver do |driver|
       fail unless driver.close(reason, code) # swapped argument order
 
-      closing!
+      closing! code
     end
   end
 
@@ -682,12 +658,9 @@ class Kontena::Websocket::Client
   #
   # @param event [WebSocket::Driver::CloseEvent] code, reason
   def on_driver_close(event)
-    debug "closed"
+    debug "closed code=#{event.code}: #{event.reason}"
 
-    closed!
-
-    @close_code = event.code
-    @close_reason = event.reason
+    closed! event.code, event.reason
   end
 
   # Start read deadline for @open_timeout
@@ -722,19 +695,69 @@ class Kontena::Websocket::Client
     @ping_delay
   end
 
-  # Client closed
+  # Client closing connection with code.
   #
   # Start read deadline for @open_timeout
-  def closing!
+  #
+  # @param code [Integer] expecting close frame from server with matching code
+  def closing!(code)
     @open = false # fail any further sends after close
     @closing = true
     @closing_at = Time.now
+    @closing_code = code # cheked by #read_closed
   end
 
   # Server closed, completing close handshake if closing.
-  def closed!
+  #
+  # @param code [Integer]
+  # @param reason [String]
+  def closed!(code, reason)
     @open = false
     @closed = true
+    @closed_code = code
+    @closed_reason = reason
+  end
+
+  # @raise [Kontena::Websocket::CloseError] server closed connection without client closing
+  # @return [Boolean] connection was closed
+  def read_closed
+    if !@closed
+      return false
+    elsif @closing && @closing_code == @closed_code
+      # client sent close, server responded with close
+      return true
+    else
+      raise Kontena::Websocket::CloseError.new(@closed_code), @closed_reason
+    end
+  end
+
+  # @raise [Kontena::Websocket::CloseError]
+  # @return [String, Array<Integer>] nil when websocket closed
+  def read_return
+    # important to first drain message queue before failing on read_closed!
+    while @message_queue.empty? && !self.read_closed
+      self.websocket_read
+    end
+
+    # returns nil if @closed, once the message queue is empty
+    return @message_queue.shift
+  end
+
+  # @raise [Kontena::Websocket::CloseError]
+  # @yield [message] received websocket message payload
+  # @yieldparam message [String, Array<integer>] text or binary
+  # @return websocket closed
+  def read_yield
+    loop do
+      while msg = @message_queue.shift
+        yield msg
+      end
+
+      # drain queue before returning on close
+      return if self.read_closed
+
+      self.websocket_read
+    end
   end
 
   # Return read deadline for current read state
