@@ -9,26 +9,28 @@ describe Kontena::Websocket::Client do
     Thread.abort_on_exception = true
   end
 
+  let(:url) { nil }
+  let(:options) { { }}
+  let(:subject) { described_class.new(url, **options) }
+
   context "For a server that does not resolve" do
-    subject { described_class.new('ws://socket.example.com') }
+    let(:url) { 'ws://socket.example.com' }
 
     it 'raises' do
       expect{
-        subject.run
+        subject.connect
       }.to raise_error(Kontena::Websocket::ConnectError, 'getaddrinfo: Name or service not known')
     end
   end
 
   context "For a server that is ECONNREFUSED" do
-    subject { described_class.new('ws://127.0.0.1:1337') }
+    let(:url) { 'ws://127.0.0.1:1337' }
 
     it 'raises ECONNREFUSED' do
       opened = false
 
       expect{
-        subject.run do
-          opened = true
-        end
+        subject.connect
       }.to raise_error(Kontena::Websocket::ConnectError, 'Connection refused - connect(2) for 127.0.0.1:1337')
 
       expect(opened).to be false
@@ -37,20 +39,12 @@ describe Kontena::Websocket::Client do
 
   context "For a blackholed server" do
     let(:url) { 'ws://192.0.2.1:1337' }
-    subject { described_class.new(url) }
+    let(:options) { { connect_timeout: 0.1 }}
 
-    context "with a short connect timeout" do
-      subject {
-        described_class.new(url,
-          connect_timeout: 0.1,
-        )
-      }
-
-      it "raises a connection timeout error" do
-        expect{
-          subject.run
-        }.to raise_error(Kontena::Websocket::TimeoutError, 'Connect timeout after 0.1s')
-      end
+    it "raises a connection timeout error" do
+      expect{
+        subject.connect
+      }.to raise_error(Kontena::Websocket::TimeoutError, 'Connect timeout after 0.1s')
     end
   end
 
@@ -71,7 +65,8 @@ describe Kontena::Websocket::Client do
       server_thread.kill
     end
 
-    subject { described_class.new("ws://127.0.0.1:#{port}", open_timeout: 0.1) }
+    let(:url) { "ws://127.0.0.1:#{port}" }
+    let(:options) { { open_timeout: 0.1 }}
 
     context "that immediately closes the connection" do
       let(:server_thread) do
@@ -86,7 +81,7 @@ describe Kontena::Websocket::Client do
 
       it 'raises a EOF error' do
         expect{
-          subject.run
+          subject.connect
         }.to raise_error(Kontena::Websocket::EOFError, 'Server closed connection without sending close frame')
       end
     end
@@ -108,7 +103,7 @@ describe Kontena::Websocket::Client do
 
       it 'raises an open timeout' do
         expect{
-          subject.run
+          subject.connect
         }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.1s for open/)
       end
     end
@@ -140,11 +135,9 @@ describe Kontena::Websocket::Client do
         end
       end
 
-      subject { described_class.new("ws://127.0.0.1:#{port}", open_timeout: 0.1) }
-
       it 'raises an open timeout' do
         expect{
-          subject.run
+          subject.connect
         }.to raise_error(Kontena::Websocket::TimeoutError, /read (deadline expired|timeout after 0.\d+s) while waiting 0.1s for open/)
       end
     end
@@ -169,7 +162,7 @@ describe Kontena::Websocket::Client do
 
       it 'raises a protocol error' do
         expect{
-          subject.run
+          subject.connect
         }.to raise_error(Kontena::Websocket::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 404')
       end
     end
@@ -215,7 +208,7 @@ describe Kontena::Websocket::Client do
         OpenSSL::SSL::SSLServer.new(tcp_server, ssl_context)
       end
       let(:server_thread) do
-        # XXX: need to generate the ssl_cert first in the main thread to ensure that server and client get the same cert
+        # need to generate the ssl_cert first in the main thread to ensure that server and client get the same cert
         ssl_server = self.ssl_server
 
         Thread.new do
@@ -241,15 +234,16 @@ describe Kontena::Websocket::Client do
       let(:url) { "wss://localhost:#{port}" }
       let(:ssl_params) { {} }
       let(:ssl_hostname) { nil }
+      let(:options) { { ssl_params: ssl_params, ssl_hostname: ssl_hostname } }
 
-      subject { described_class.new(url, ssl_params: ssl_params, ssl_hostname: ssl_hostname) }
+      subject { described_class.new(url, **options) }
 
       context "without ssl verify" do
         let(:ssl_params) { { verify_mode: OpenSSL::SSL::VERIFY_NONE } }
 
         it 'is able to connect' do
           expect{
-            subject.run
+            subject.connect
           }.to raise_error(Kontena::Websocket::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
         end
       end
@@ -257,67 +251,67 @@ describe Kontena::Websocket::Client do
       context "with default ssl verify" do
         it 'raises a SSL verify error about a self-signed cert' do
           expect{
-            subject.run
+            subject.connect
           }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: self signed certificate') do |error|
-            expect(error.cert).to be nil
+
+          expect(error.cert).to be nil
+        end
+      end
+
+      context "with default verify and the cert configured as a CA cert" do
+        let(:cert_file) do
+          cert_file = Tempfile.new('kontena-websocket-ssl-cert')
+          cert_file.print ssl_cert.to_pem
+          cert_file.close
+          cert_file
+        end
+
+        let(:ssl_params) { {
+            verify_mode: OpenSSL::SSL::VERIFY_PEER,
+            ca_file: cert_file.path,
+        } }
+
+        before do
+          cert_file
+        end
+
+        after do
+          cert_file.unlink
+        end
+
+        it 'is able to connect' do
+          expect{
+            subject.connect
+          }.to raise_error(Kontena::Websocket::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
+        end
+
+        context 'with the wrong hostname' do
+          let(:url) { "wss://127.0.0.1:#{port}" }
+
+          it 'raises a SSL verify error about a self-signed cert' do
+            expect{
+              subject.connect
+            }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: Subject does not match hostname 127.0.0.1: /CN=localhost')
           end
         end
 
-        context "with the cert configured as a CA cert" do
-          let(:cert_file) do
-            cert_file = Tempfile.new('kontena-websocket-ssl-cert')
-            cert_file.print ssl_cert.to_pem
-            cert_file.close
-            cert_file
+        context 'with a custom CN' do
+          let(:ssl_hostname) do
+            'Test'
           end
-
-          let(:ssl_params) { {
-              verify_mode: OpenSSL::SSL::VERIFY_PEER,
-              ca_file: cert_file.path,
-          } }
-
-          before do
-            cert_file
-            subject
-          end
-
-          after do
-            cert_file.unlink
+          let(:ssl_subject) do
+            OpenSSL::X509::Name.parse "/C=FI/O=Test/OU=Test/CN=Test" # used by the cli Kontena::Machine::CertHelper
           end
 
           it 'is able to connect' do
             expect{
-              subject.run
+              subject.connect
             }.to raise_error(Kontena::Websocket::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
-          end
-
-          context 'with the wrong hostname' do
-            let(:url) { "wss://127.0.0.1:#{port}" }
-
-            it 'raises a SSL verify error about a self-signed cert' do
-              expect{
-                subject.run
-              }.to raise_error(Kontena::Websocket::SSLVerifyError, 'certificate verify failed: Subject does not match hostname 127.0.0.1: /CN=localhost')
-            end
-          end
-
-          context 'with a custom CN' do
-            let(:ssl_hostname) do
-              'Test'
-            end
-            let(:ssl_subject) do
-              OpenSSL::X509::Name.parse "/C=FI/O=Test/OU=Test/CN=Test" # used by the cli Kontena::Machine::CertHelper
-            end
-
-            it 'is able to connect' do
-              expect{
-                subject.run
-              }.to raise_error(Kontena::Websocket::ProtocolError, 'Error during WebSocket handshake: Unexpected response code: 501')
-            end
           end
         end
       end
     end
+  end # XXX
 
     context 'that is a websocket server' do
       let(:server_thread) do
@@ -354,12 +348,12 @@ describe Kontena::Websocket::Client do
               driver.on :message do |event|
                 case event.data
                 when 'sleep'
-                  logger.info("websocket server sleep")
+                  logger.info("websocket server: sleep 1.0")
 
                   sleep 1.0
 
                 when 'close'
-                  logger.info("websocket server close")
+                  logger.info("websocket server: close 4000")
 
                   driver.close('test', 4000)
 
@@ -388,33 +382,30 @@ describe Kontena::Websocket::Client do
       end
 
       let(:ping_interval) { 10.0 }
-      subject {
-        described_class.new("ws://127.0.0.1:#{port}",
-          connect_timeout: 1.0,
-          open_timeout: 1.0,
-          ping_interval: ping_interval,
-          ping_timeout: 0.13,
-          close_timeout: 0.11,
-          write_timeout: 0.12,
-        )
-      }
+      let(:options) {{
+        connect_timeout: 1.0,
+        open_timeout: 1.0,
+        ping_interval: ping_interval,
+        ping_timeout: 0.13,
+        close_timeout: 0.11,
+        write_timeout: 0.12,
+      }}
 
       it 'is able to connect, exchange messages and close the connection' do
         opened = 0
         messages = []
 
         expect{
-          subject.on_message do |message|
-            messages << message
-          end
-
-          subject.run do
+          described_class.connect(url, **options) do |subject|
             logger.info("websocket client open")
             opened += 1
 
             subject.send('Hello World!')
-
             subject.close
+
+            subject.read do |message|
+              messages << message
+            end
           end
         }.to_not raise_error
 
@@ -423,30 +414,31 @@ describe Kontena::Websocket::Client do
       end
 
       it 'sees close from server' do
-        subject.run do
+        described_class.connect(url, **options) do |subject|
           subject.send('close')
-        end
 
-        expect(subject.close_code).to eq 4000
-        expect(subject.close_reason).to eq 'test'
+          subject.read
+
+          expect(subject.close_code).to eq 4000
+          expect(subject.close_reason).to eq 'test'
+        end
       end
 
       context "with a full send buffer" do
-        let(:sender_thread) do
-          Thread.new do
-            loop do
-              subject.send('spam' * 1024 * 8) # ~8KB
-            end
-          end
-        end
-
         it 'raises write timeout if the server blocks' do
           expect{
-            subject.run do
-              sender_thread
+            described_class.connect(url, **options) do |subject|
+              # XXX: kill thread?
+              Thread.new do
+                loop do
+                  subject.send('spam' * 1024 * 8) # ~8KB
+                end
+              end
 
               # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
               subject.send('sleep')
+
+              subject.read
             end
           }.to raise_error(Kontena::Websocket::TimeoutError, 'write timeout after 0.12s')
         end
@@ -454,11 +446,12 @@ describe Kontena::Websocket::Client do
 
       it 'raises close timeout if the server blocks' do
         expect{
-          subject.run do
+          described_class.connect(url, **options) do |subject|
             # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
             subject.send('sleep')
-
             subject.close
+
+            subject.read
           end
         }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.11s for close/)
       end
@@ -466,15 +459,17 @@ describe Kontena::Websocket::Client do
       context 'with a short ping interval' do
         let(:ping_interval) { 0.2 }
 
-        it 'sees ping-pong delay' do
+        pending 'sees ping-pong delay' do
           ping_delay = nil
 
-          subject.on_pong do |delay|
-            ping_delay = delay
-            subject.close
-          end
-          subject.run do
+          described_class.connect(url, **options) do |subject|
+            subject.on_pong do |delay|
+              ping_delay = delay
+              subject.close # XXX
+            end
+
             # wait for ping
+            subject.read
           end
 
           expect(ping_delay).to be > 0.0
@@ -482,9 +477,11 @@ describe Kontena::Websocket::Client do
 
         it 'raises ping timeout if the server blocks' do
           expect{
-            subject.run do
+            described_class.connect(url, **options) do |subject|
               # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
               subject.send('sleep')
+
+              subject.read
             end
           }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.13s for pong/)
         end

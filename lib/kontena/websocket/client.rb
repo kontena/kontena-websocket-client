@@ -45,6 +45,39 @@ class Kontena::Websocket::Client
   CLOSE_TIMEOUT = 60.0
   WRITE_TIMEOUT = 60.0
 
+  # Connect, send websocket handshake, and loop reading responses.
+  #
+  # Passed block is called once websocket is open.
+  # Raises on errors.
+  # Returns once websocket is closed by server.
+  #
+  # Intended to be called using a dedicated per-websocket thread.
+  # Other threads can then call the other threadsafe methods:
+  #  * send
+  #  * close
+  #
+  # @yield [client] websocket open
+  # @raise [Kontena::Websocket::ConnectError]
+  # @raise [Kontena::Websocket::ProtocolError]
+  # @raise [Kontena::Websocket::TimeoutError]
+  # @return websocket closed by server, @see #close_code #close_reason
+  def self.connect(url, **options, &block)
+    client = new(url, **options)
+
+    client.connect
+
+    begin
+      yield client
+    ensure
+      # ensure socket is closed and client disconnected on any of:
+      #   * connect error
+      #   * open error
+      #   * read error
+      #   * close
+      client.disconnect
+    end
+  end
+
   # @param [String] url
   # @param headers [Hash{String => String}]
   # @param ssl_params [Hash] @see OpenSSL::SSL::SSLContext
@@ -58,7 +91,8 @@ class Kontena::Websocket::Client
   # @param close_timeout [Float] expect close frame after #close
   # @param write_timeout [Float] block #send when sending faster than the server is able to receive, fail if no progress is made
   # @raise [ArgumentError] Invalid websocket URI
-  def initialize(url, headers: {},
+  def initialize(url,
+      headers: {},
       ssl_params: {},
       ssl_hostname: nil,
       connect_timeout: CONNECT_TIMEOUT,
@@ -87,8 +121,8 @@ class Kontena::Websocket::Client
     @mutex = Mutex.new # for @driver
 
     # written by #enqueue from @driver callbacks with the @mutex held
-    # drained by #process_queue from #run -> #read_loop without the @mutex held
-    @queue = []
+    # drained by #read without the @mutex held
+    @message_queue = []
 
     # sequential ping-pongs
     @ping_at = Time.now # fake for first ping_interval
@@ -131,14 +165,6 @@ class Kontena::Websocket::Client
     @uri.port || (@uri.scheme == "ws" ? 80 : 443)
   end
 
-  # Register block to pass received messages to.
-  #
-  # @yield [message] received websocket message payload
-  # @yieldparam message [String, Array<integer>] text or binary
-  def on_message(&block)
-    @on_message = block
-  end
-
   # Connected to server. Not necessarily open yet.
   #
   # @return [Boolean]
@@ -151,7 +177,7 @@ class Kontena::Websocket::Client
   # @return [Boolean]
   def opening?
     # XXX: also true after disconnect
-    !!@opening_at && !@open
+    !!@opening_at && !@opened
   end
 
   # Server has accepted websocket connection.
@@ -189,68 +215,13 @@ class Kontena::Websocket::Client
     @close_reason
   end
 
-  # Connect, send websocket handshake, and loop reading responses.
+  # Create @socket, @connection and open @driver.
   #
-  # Passed block is called once websocket is open.
-  # Raises on errors.
-  # Returns once websocket is closed by server.
-  #
-  # Intended to be called using a dedicated per-websocket thread.
-  # Other threads can then call the other threadsafe methods:
-  #  * send
-  #  * close
-  #
-  # @yield [] websocket open
-  # @raise [Kontena::Websocket::ConnectError]
-  # @raise [Kontena::Websocket::ProtocolError]
-  # @raise [Kontena::Websocket::TimeoutError]
-  # @return websocket closed by server, @see #close_code #close_reason
-  def run(&block)
-    @on_open = block
-
-    self.connect
-
-    while !@closed
-      read_state, state_start, state_timeout = self.read_state_timeout
-
-      if state_timeout
-        read_deadline = state_start + state_timeout
-        read_timeout = read_deadline - Time.now
-      else
-        read_timeout = nil
-      end
-
-      begin
-        # read and process frames with @driver @mutex held
-        self.read(read_timeout)
-      rescue Kontena::Websocket::TimeoutError => exc
-        if read_state == :ping
-          debug "ping on #{exc}"
-          self.ping
-        elsif read_state
-          raise exc.class.new("#{exc} while waiting #{state_timeout}s for #{read_state}")
-        else
-          raise
-        end
-      end
-
-      # call @queue blocks with the lock released
-      self.process_queue
-    end
-
-  ensure
-    # ensure socket is closed and client disconnected on any of:
-    #   * start error
-    #   * read error
-    #   * read EOF
-    self.disconnect
-  end
-
-  # Create @socket, @connection and open @driver
+  # Blocks until open. Disconnects if fails.
   #
   # @raise [Kontena::Websocket::ConnectError]
   # @raise [Kontena::Websocket::TimeoutError]
-  # @return [Connection]
+  # @return once websocket is open
   def connect
     if ssl?
       @socket = self.connect_ssl
@@ -263,6 +234,13 @@ class Kontena::Websocket::Client
     )
 
     @driver = self.open(@connection)
+
+    # blocks
+    self.websocket_read until @open
+
+  rescue
+    disconnect
+    raise
   end
 
   # @raise [RuntimeError] not connected
@@ -311,6 +289,44 @@ class Kontena::Websocket::Client
     end
   end
 
+  # Read messages from websocket.
+  #
+  # If a block is given, then this loops and yields messages until closed.
+  # Otherwise, returns the next message, or nil if closed.
+  def read(&block)
+    if block
+      read_yield(&block)
+    else
+      read_return
+    end
+  end
+
+  # @return [String, Array<Integer>] nil when websocket closed
+  def read_return
+    while !@closed && @message_queue.empty?
+      self.websocket_read
+    end
+
+    # returns nil if @closed, once the message queue is empty
+    return @message_queue.shift
+  end
+
+  # @yield [message] received websocket message payload
+  # @yieldparam message [String, Array<integer>] text or binary
+  # @return websocket closed
+  def read_yield
+    loop do
+      while msg = @message_queue.shift
+        yield msg
+      end
+
+      # drain queue before returning on close
+      return if @closed
+
+      self.websocket_read
+    end
+  end
+
   # Send message frame, either text or binary.
   #
   # @param message [String, Array<Integer>]
@@ -333,6 +349,7 @@ class Kontena::Websocket::Client
 
   # Register pong handler.
   # Called from the #read thread every ping_interval after received pong.
+  # XXX: called with driver @mutex locked
   #
   # The ping interval should be longer than the ping timeout.
   # If new pings are sent before old pings get any response, then the older pings do not yield on pong.
@@ -353,26 +370,25 @@ class Kontena::Websocket::Client
   # @raise [RuntimeError] not connected
   def ping
     with_driver do |driver|
-      # must be called from #read loop to use the right read timeout
+      # start ping timeout for next read
       ping_at = pinging!
 
       debug "pinging at #{ping_at}"
 
       fail unless driver.ping(ping_at.utc.strftime(PING_STRFTIME)) do
+        # called from read -> @driver.parse with @mutex held!
         debug "pong for #{ping_at}"
 
         # resolve ping timeout, unless this pong is late and we already sent a new one
-        # called with @mutex held
         if ping_at == @ping_at
           ping_delay = pinged!
 
           debug "ping-pong at #{ping_at} in #{ping_delay}s"
 
-          # queue to call block without @mutex held
-          enqueue { @on_pong.call(ping_delay) } if @on_pong
+          # XXX: defer call without mutex?
+          @on_pong.call(ping_delay) # TODO: also pass ping_at
         end
       end
-
     end
   end
 
@@ -392,7 +408,8 @@ class Kontena::Websocket::Client
     @ping_delay
   end
 
-  # Send close frame. Waits for server to send back close frame, and then allows #run to return.
+  # Send close frame. Does not disconnect, but allows #read to return once server completes close handshake.
+  #
   # Imposes a close timeout when called from #run blocks (run/on_message/on_pong do ...). If called from
   # a different thread, then #run should eventually return, once either:
   # * server sends close frame
@@ -413,6 +430,20 @@ class Kontena::Websocket::Client
     end
   end
 
+  # Clear connection state, close socket.
+  # Does not send websocket close frame, or wait for server to close.
+  def disconnect
+    debug "disconnect"
+
+    @open = false
+    @driver = nil
+    @connection = nil
+
+    # TODO: errors and timeout? SSLSocket.close in particular is bidirectional?
+    @socket.close if @socket
+    @socket = nil
+  end
+
 #protected XXX: called by specs TODO: refactor out to separate TCP/SSL client classes
 
   # Call into driver with locked Mutex
@@ -426,23 +457,6 @@ class Kontena::Websocket::Client
     @mutex.synchronize {
       yield @driver
     }
-  end
-
-  # Called from @driver callbacks with the @mutex held
-  #
-  # Queues block for call from #process_queue
-  def enqueue(&block)
-    fail unless block
-
-    @queue << block
-  end
-
-  # Called from read_loop without the @mutex held
-  #
-  def process_queue
-    while block = @queue.shift
-      block.call
-    end
   end
 
   # Connect to TCP server.
@@ -597,6 +611,8 @@ class Kontena::Websocket::Client
   # @raise [RuntimeError] already started?
   # @return [WebSocket::Driver::Client]
   def open(connection)
+    debug "open..."
+
     driver = ::WebSocket::Driver.client(connection)
 
     @headers.each do |k, v|
@@ -624,6 +640,8 @@ class Kontena::Websocket::Client
     # not expected to emit anything, not even :error
     fail unless driver.start
 
+    debug "opening"
+
     opening!
 
     return driver
@@ -642,23 +660,27 @@ class Kontena::Websocket::Client
   #
   # @param event [WebSocket::Driver::OpenEvent] no attrs
   def on_driver_open(event)
+    debug "opened"
+
     opened!
-    enqueue { @on_open.call } if @on_open
   end
 
   # Queue up received messages
-  # Causes #read_loop -> #process_messages to dequeue and yield to @listen_block
+  # Causes #read to return/yield once websocket_read returns with the driver mutex unlocked.
   #
   # @param event [WebSocket::Driver::MessageEvent] data
   def on_driver_message(event)
-    enqueue { @on_message.call(event.data) } if @on_message
+    @message_queue << event.data
   end
 
   # Mark client as closed, allowing #run to return (and disconnect from the server).
   #
   # @param event [WebSocket::Driver::CloseEvent] code, reason
   def on_driver_close(event)
-    @closed = true
+    debug "closed"
+
+    closed!
+
     @close_code = event.code
     @close_reason = event.reason
   end
@@ -668,8 +690,9 @@ class Kontena::Websocket::Client
     @opening_at = Time.now
   end
 
-  # opened
+  # Server completed open handshake.
   def opened!
+    @opened = true
     @open = true
   end
 
@@ -694,10 +717,19 @@ class Kontena::Websocket::Client
     @ping_delay
   end
 
+  # Client closed
+  #
   # Start read deadline for @open_timeout
   def closing!
+    @open = false # fail any further sends after close
     @closing = true
     @closing_at = Time.now
+  end
+
+  # Server closed, completing close handshake if closing.
+  def closed!
+    @open = false
+    @closed = true
   end
 
   # Return read deadline for current read state
@@ -718,14 +750,50 @@ class Kontena::Websocket::Client
     end
   end
 
-  # Read from socket, and parse websocket frames, enqueue blocks.
+  # Read socket with timeout, parse websocket frames via @driver, emitting on-driver_* to enqueue messages.
+  # Sends ping on interval timeout.
+  def websocket_read
+    read_state, state_start, state_timeout = self.read_state_timeout
+
+    if state_timeout
+      read_deadline = state_start + state_timeout
+      read_timeout = read_deadline - Time.now
+    else
+      read_timeout = nil
+    end
+
+    debug "read (#{read_state})"
+
+    begin
+      # read from socket
+      data = self.socket_read(read_timeout)
+    rescue Kontena::Websocket::TimeoutError => exc
+      if read_state == :ping
+        debug "ping on #{exc}"
+        self.ping
+      elsif read_state
+        raise exc.class.new("#{exc} while waiting #{state_timeout}s for #{read_state}")
+      else
+        raise
+      end
+    else
+      # parse data with @driver @mutex held
+      with_driver do |driver|
+        # call into the driver, causing it to emit the events registered in #start
+        driver.parse(data)
+      end
+    end
+  end
+
+  # Read from socket with timeout, parse websocket frames.
+  # Invokes on_driver_*, which enqueues messages.
   # The websocket must be connected.
   #
   # @param timeout [Flaot] seconds
   # @raise [Kontena::Websocket::TimeoutError] read deadline expired
   # @raise [Kontena::Websocket::TimeoutError] read timeout after X.Ys
   # @raise [Kontena::Websocket::SocketError]
-  def read(timeout = nil)
+  def socket_read(timeout = nil)
     if timeout && timeout <= 0.0
       raise Kontena::Websocket::TimeoutError, "read deadline expired"
     end
@@ -746,31 +814,5 @@ class Kontena::Websocket::Client
 
     # TODO: Errno::ECONNRESET etc
     end
-
-    with_driver do |driver|
-      # call into the driver, causing it to emit the events registered in #start
-      driver.parse(data)
-    end
-  end
-
-  # Clear connection state, close socket
-  #
-  # This gets called from:
-  # * run ensure
-  # * on :close
-  #
-  # This means that this can get called twice:
-  # * Server sends close frame: read -> on :close -> disconnect
-  # * Socket is closed: read EOF -> run ensure -> disconnect
-  def disconnect
-    debug "disconnect"
-
-    @open = false
-    @driver = nil
-    @connection = nil
-
-    # TODO: errors and timeout? SSLSocket.close in particular is bidirectional?
-    @socket.close if @socket
-    @socket = nil
   end
 end
