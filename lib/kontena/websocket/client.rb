@@ -10,22 +10,21 @@ require 'openssl'
 #
 =begin example
    def websocket_connect
-      @ws = Kontena::Websocket::Client.new(url, ...)
-      @ws.on_message do |message|
-        actor.on_message(message)
-      end
+      Kontena::Websocket::Client.connect(url, ...) do |client|
+        on_open(client)
 
-      # connecting
-      @ws.run do
-        # connected
-        actor.on_open
+        client.read do |message|
+          on_message(message)
+        end
+
+        on_close(client.close_code, client.close_reason) # client closed connection
       end
-      actor.on_close(@ws.close_code, @ws.close_reason)
+    rescue Kontena::Websocket::CloseError => exc
+      on_close(exc.code, exc.reason) # server closed connection
     rescue Kontena::Websocket::Error => exc
-      actor.on_error(exc)
+      on_error(exc)
     ensure
       # disconnected
-      @ws = nil
     end
   end
 =end
