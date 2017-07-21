@@ -33,7 +33,7 @@ class Kontena::Websocket::Client::Connection
     def wait_socket_readable(socket, timeout = nil)
       debug "wait read: timeout=#{timeout}"
 
-      IO.select([self], nil, nil, timeout) or raise Kontena::Websocket::TimeoutError, "read timeout after #{timeout}s"
+      IO.select([socket], nil, nil, timeout) or raise Kontena::Websocket::TimeoutError, "read timeout after #{timeout}s"
     end
 
     # @param socket [Socket]
@@ -42,7 +42,7 @@ class Kontena::Websocket::Client::Connection
     def wait_socket_writable(socket, timeout = nil)
       debug "wait write: timeout=#{timeout}"
 
-      IO.select(nil, [self], nil, timeout) or raise Kontena::Websocket::TimeoutError, "write timeout after #{timeout}s"
+      IO.select(nil, [socket], nil, timeout) or raise Kontena::Websocket::TimeoutError, "write timeout after #{timeout}s"
     end
   end
 
