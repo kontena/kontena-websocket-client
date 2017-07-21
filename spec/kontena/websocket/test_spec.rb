@@ -4,6 +4,7 @@ require 'kontena-websocket-client'
 RSpec.describe Kontena::Websocket::Client do
   let(:logger) {
     logger = Logger.new(STDERR)
+    logger.level = ENV['LOG_LEVEL'] || Logger::INFO
     logger.progname = 'test'
     logger
   }
