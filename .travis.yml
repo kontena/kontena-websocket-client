@@ -2,12 +2,20 @@ sudo: false
 dist: trusty
 language: ruby
 rvm:
-  - 2.1.10
-  - 2.2.6
-  - 2.3.3
-  - 2.4.1
+- 2.1.10
+- 2.2.6
+- 2.3.3
+- 2.4.1
 before_install: gem install bundler -v 1.15.1
 install:
-  - bundle install --path vendor/bundle
+- bundle install --path vendor/bundle
 script:
-  - bundle exec rspec
+- bundle exec rspec
+deploy:
+  provider: rubygems
+  api_key:
+    secure: Aw06Tbfzg5J2XcdnbI6t5o2Wc04pqybm/7skgLtyMw1H8cmMY+7xglO7GHgz0C+Mp3oXs4NSLbUWoM2vmdL936NtQkv0WV6Zp1Ardkk3wl40m9dPDnhXy2pJoEaC00PFEuMNxAG0PphPwskSXyjzpGqTeohuZSkVER9VaKlWrbdroRlJK2u9XSkTyne9Nk1QJwrO/guCVwHGn+/VgzACE0xNsCoDcyUWxuwz/XZFupWzIrrCGGVnuzOxpY93nBIJmyFM5Va43b2QzvRWex5EmetoMaHAA9NiCa2bzjFauY9z6M93bXHvCipqd2YFb47AsSNVb6U8hVFaWwR+dYs3xN/O3Isil90BagPUHl/JGgq1MCR5qjpsFNY95F1DepRuHolFTxtHVZigJyPRxnb7YtUZUCHNvBYAsGI9l0weRlj3Ucp1sbGlVvxSOvkrIMgM7ii5SG/t6hgYTyahdIlQcNVwG/JE6Ll2IPUIb8ZLFPN4OnFzzWpmnOja4liOqC1N1X9kKKTa9yFmQbdSID+vd3KPn1IBnS2s2amB1ApmAJ64WDTeGw947kXRy+t2Wk/Ux9qXj1RD/JM6dgPZAvrTvGA17T2Z75yHWYtCG99/FJyhn4kCCYLuui1c+DkvieBeMrZrG4S0hzK30gPsQ3K36YH9VJPvyqlCrURvqpiNfkE=
+  gem: kontena-websocket-client
+  on:
+    tags: true
+    repo: kontena/kontena-websocket-client
