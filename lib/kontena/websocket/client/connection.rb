@@ -54,7 +54,7 @@ class Kontena::Websocket::Client::Connection
     end
   end
 
-  if (RUBY_VERSION.split('.').map{|x|x.to_i} <=> [2, 3]) >= 0
+  if Kontena::Websocket::Client.ruby_version? '2.3'
     require 'io/wait'
     include Waitable
   else
