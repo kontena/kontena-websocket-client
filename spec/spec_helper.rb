@@ -13,6 +13,6 @@ RSpec.configure do |config|
   end
 
   config.before :all do
-    Kontena::Websocket::Logging.initialize_logger(STDERR, ENV['LOG_LEVEL'] || Logger::INFO)
+    Kontena::Websocket::Logging.initialize_logger(STDERR, (ENV['LOG_LEVEL'] || Logger::INFO).to_i)
   end
 end
