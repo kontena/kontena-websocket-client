@@ -1,3 +1,8 @@
+require 'openssl'
+require 'socket'
+require 'websocket/driver'
+
+# OpenSSL::SSL::SSLSocket#wait_readable, #wait_writable
 require_relative './kontena/websocket/openssl_patch'
 
 module Kontena

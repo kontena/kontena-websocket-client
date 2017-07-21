@@ -1,8 +1,3 @@
-require 'websocket/driver'
-require 'forwardable'
-require 'socket'
-require 'openssl'
-
 # Threadsafe: while the #run method is reading/parsing incoming websocket frames, the #send/#ping/#close methods
 # can be called by other threads.
 # The #run (on_open), #on_message and #on_pong blocks will be called from the #run thread.
