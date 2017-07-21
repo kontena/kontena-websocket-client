@@ -1,6 +1,6 @@
 require 'kontena-websocket-client'
 
-describe Kontena::Websocket::Client::Connection do
+RSpec.describe Kontena::Websocket::Client::Connection do
   let(:uri) { URI.parse('ws://socket.example.com') }
   let(:socket) { instance_double(TCPSocket) }
 

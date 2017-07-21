@@ -1,5 +1,5 @@
 require "bundler/setup"
-require "kontena/websocket/client"
+require "kontena-websocket-client"
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure
@@ -10,5 +10,9 @@ RSpec.configure do |config|
 
   config.expect_with :rspec do |c|
     c.syntax = :expect
+  end
+
+  config.before :all do
+    Kontena::Websocket::Logging.initialize_logger(STDERR, (ENV['LOG_LEVEL'] || Logger::INFO).to_i)
   end
 end

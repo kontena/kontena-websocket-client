@@ -1,9 +1,12 @@
 require 'tempfile'
 require 'kontena-websocket-client'
 
-describe Kontena::Websocket::Client do
+RSpec.describe Kontena::Websocket::Client do
   let(:logger) {
-    Logger.new(STDERR)
+    logger = Logger.new(STDERR)
+    logger.level = (ENV['LOG_LEVEL'] || Logger::INFO).to_i
+    logger.progname = 'test'
+    logger
   }
   before do
     Thread.abort_on_exception = true
@@ -66,15 +69,24 @@ describe Kontena::Websocket::Client do
     end
 
     let(:url) { "ws://127.0.0.1:#{port}" }
-    let(:options) { { open_timeout: 0.1 }}
+    let(:options) { { open_timeout: 0.5 }}
 
     context "that immediately closes the connection" do
+      let(:options) { { open_timeout: 1.0 }}
+
       let(:server_thread) do
         Thread.new do
           loop do
+            logger.debug "accept..."
             client = tcp_server.accept
-            client.readpartial(1024)
-            client.close
+
+            begin
+              logger.debug "read..."
+              client.readpartial(1024)
+            ensure
+              logger.debug "close..."
+              client.close
+            end
           end
         end
       end
@@ -104,7 +116,7 @@ describe Kontena::Websocket::Client do
       it 'raises an open timeout' do
         expect{
           subject.connect
-        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.1s for open/)
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.5s for open/)
       end
     end
 
@@ -124,9 +136,14 @@ describe Kontena::Websocket::Client do
                 "Connection: upgrade",
               ].join("\r\n"))
 
-              loop do
-                client.write("X-Foo: bar\r\n")
-                Thread.pass
+              begin
+                loop do
+                  client.write("X-Foo: bar\r\n")
+                  Thread.pass
+                end
+              rescue Errno::ECONNRESET => exc
+                # expected
+                logger.debug "server write error: #{exc}"
               end
             ensure
               client.close
@@ -138,7 +155,7 @@ describe Kontena::Websocket::Client do
       it 'raises an open timeout' do
         expect{
           subject.connect
-        }.to raise_error(Kontena::Websocket::TimeoutError, /read (deadline expired|timeout after 0.\d+s) while waiting 0.1s for open/)
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read (deadline expired|timeout after 0.\d+s) while waiting 0.5s for open/)
       end
     end
 
@@ -334,6 +351,7 @@ describe Kontena::Websocket::Client do
                     "",
                   ].join("\r\n"))
                   socket.close
+                  return
                 end
               end
 
@@ -365,7 +383,6 @@ describe Kontena::Websocket::Client do
               end
               driver.on :close do |event|
                 logger.info("websocket server close: #{event}")
-                socket.close
               end
 
               loop do
@@ -423,19 +440,14 @@ describe Kontena::Websocket::Client do
 
       context "with a full send buffer" do
         it 'raises write timeout if the server blocks' do
+          subject.connect
+
+          # block the server for 1.0s, enough for the spam loop to fill the socket read+write buffers
+          subject.send('sleep')
+
           expect{
-            described_class.connect(url, **options) do |subject|
-              # XXX: kill thread?
-              Thread.new do
-                loop do
-                  subject.send('spam' * 1024 * 8) # ~8KB
-                end
-              end
-
-              # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
-              subject.send('sleep')
-
-              subject.read
+            loop do
+              subject.send('spam' * 1024 * 8) # ~8KB
             end
           }.to raise_error(Kontena::Websocket::TimeoutError, 'write timeout after 0.12s')
         end
