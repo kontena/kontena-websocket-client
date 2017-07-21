@@ -71,6 +71,8 @@ RSpec.describe Kontena::Websocket::Client do
     let(:options) { { open_timeout: 0.5 }}
 
     context "that immediately closes the connection" do
+      let(:options) { { open_timeout: 1.0 }}
+
       let(:server_thread) do
         Thread.new do
           loop do
