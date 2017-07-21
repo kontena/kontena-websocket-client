@@ -1,7 +1,7 @@
 require 'tempfile'
 require 'kontena-websocket-client'
 
-describe Kontena::Websocket::Client do
+RSpec.describe Kontena::Websocket::Client do
   let(:logger) {
     Logger.new(STDERR)
   }

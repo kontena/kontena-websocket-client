@@ -1,6 +1,6 @@
 require 'kontena-websocket-client'
 
-describe Kontena::Websocket::Client do
+RSpec.describe Kontena::Websocket::Client do
   subject { described_class.new('ws://socket.example.com') }
 
   describe '#initialize' do

@@ -1,5 +1,5 @@
 require "bundler/setup"
-require "kontena/websocket/client"
+require "kontena-websocket-client"
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure
