@@ -3,7 +3,9 @@ require 'kontena-websocket-client'
 
 RSpec.describe Kontena::Websocket::Client do
   let(:logger) {
-    Logger.new(STDERR)
+    logger = Logger.new(STDERR)
+    logger.progname = 'test'
+    logger
   }
   before do
     Thread.abort_on_exception = true
