@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/kontena/kontena-websocket-client.svg?branch=master)](https://travis-ci.org/kontena/kontena-websocket-client)
+
 # Kontena::Websocket::Client
 
 ## Installation
