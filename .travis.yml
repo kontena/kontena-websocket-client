@@ -19,3 +19,4 @@ deploy:
   on:
     tags: true
     repo: kontena/kontena-websocket-client
+    rvm: 2.3.3
