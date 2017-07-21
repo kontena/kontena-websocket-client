@@ -66,7 +66,7 @@ describe Kontena::Websocket::Client do
     end
 
     let(:url) { "ws://127.0.0.1:#{port}" }
-    let(:options) { { open_timeout: 0.1 }}
+    let(:options) { { open_timeout: 0.5 }}
 
     context "that immediately closes the connection" do
       let(:server_thread) do
@@ -104,7 +104,7 @@ describe Kontena::Websocket::Client do
       it 'raises an open timeout' do
         expect{
           subject.connect
-        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.1s for open/)
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read timeout after 0.\d+s while waiting 0.5s for open/)
       end
     end
 
@@ -124,9 +124,14 @@ describe Kontena::Websocket::Client do
                 "Connection: upgrade",
               ].join("\r\n"))
 
-              loop do
-                client.write("X-Foo: bar\r\n")
-                Thread.pass
+              begin
+                loop do
+                  client.write("X-Foo: bar\r\n")
+                  Thread.pass
+                end
+              rescue Errno::ECONNRESET => exc
+                # expected
+                logger.debug "server write error: #{exc}"
               end
             ensure
               client.close
@@ -138,7 +143,7 @@ describe Kontena::Websocket::Client do
       it 'raises an open timeout' do
         expect{
           subject.connect
-        }.to raise_error(Kontena::Websocket::TimeoutError, /read (deadline expired|timeout after 0.\d+s) while waiting 0.1s for open/)
+        }.to raise_error(Kontena::Websocket::TimeoutError, /read (deadline expired|timeout after 0.\d+s) while waiting 0.5s for open/)
       end
     end
 
