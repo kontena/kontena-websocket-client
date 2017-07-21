@@ -18,10 +18,12 @@ Or install it yourself as:
 
 ## Usage
 
-The high-level `Kontena::Websocket::Client#connect` API uses a synchronous programming model instead of the event-based `on(:event) do ...` model used by the browser WebSockets API.
-The `connect` class method yields the connected `Kontena::Websocket::Client` object.
-The `read` method yields received websocket messages and returns once the websocket is closed.
-Either of these functions can also raise `Kontena::Websocket::Error`.  
+The high-level `Kontena::Websocket::Client#connect` API uses a synchronous programming model instead of the event-based `on(:event) do ...` model used by the browser WebSockets API:
+
+* The `connect` class method yields the connected `Kontena::Websocket::Client` object
+* The `read` method yields received websocket messages and returns once the websocket is closed
+* The `send` and `close` methods can be called from the `connect` block, the `read` block, or a different thread
+* Any of these functions can also raise `Kontena::Websocket::Error`
 
 ```ruby
 require 'kontena-websocket-client'
@@ -65,7 +67,7 @@ XXX: The `on_pong` callback is called with the mutex held; do not call any clien
 
 ### Timeouts
 
-The `Kontena::Websocket::Client` uses timeouts to deal with network errors and not leave the client hanging, which are given as `options`. Timeouts will raise a descriptive `Kontena::Websocket::TimeoutError` from either the `connect`, `read` or `send/close` methods.
+The `Kontena::Websocket::Client` uses timeouts (given in `options`) to deal with network errors and not leave the client hanging. Timeouts will raise a descriptive `Kontena::Websocket::TimeoutError` from either the `connect`, `read` or `send/close` methods.
 
 * `connect_timeout` is used for both TCP, SSL `connect` operations
 * `open_timeout` is used for the websocket `open` handshake
