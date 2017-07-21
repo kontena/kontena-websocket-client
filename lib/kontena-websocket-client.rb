@@ -1,4 +1,3 @@
-require 'io/wait'
 require 'openssl'
 require 'socket'
 require 'websocket/driver'
