@@ -339,6 +339,7 @@ describe Kontena::Websocket::Client do
                     "",
                   ].join("\r\n"))
                   socket.close
+                  return
                 end
               end
 
@@ -370,7 +371,6 @@ describe Kontena::Websocket::Client do
               end
               driver.on :close do |event|
                 logger.info("websocket server close: #{event}")
-                socket.close
               end
 
               loop do
