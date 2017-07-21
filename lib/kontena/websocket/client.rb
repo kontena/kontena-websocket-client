@@ -505,9 +505,17 @@ class Kontena::Websocket::Client
   # @return [OpenSSL::SSL::SSLContext]
   def ssl_context
     @ssl_context ||= OpenSSL::SSL::SSLContext.new().tap do |ssl_context|
-      ssl_context.set_params(**@ssl_params,
+      params = {
         cert_store: self.ssl_cert_store,
-      )
+        **@ssl_params
+      }
+
+      if Kontena::Websocket::Client.ruby_version? '2.4'
+        # prefer our own ssl_verify_cert! logic
+        params[:verify_hostname] = false
+      end
+
+      ssl_context.set_params(params)
     end
   end
 
