@@ -414,9 +414,9 @@ class Kontena::Websocket::Client
   # @yield [driver]
   # @yieldparam driver [Websocket::Driver]
   def with_driver
-    fail "not connected" unless @driver
-
     @mutex.synchronize {
+      fail "not connected" unless @driver
+
       yield @driver
     }
   end
