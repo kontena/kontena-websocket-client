@@ -1,5 +1,5 @@
 class Kontena::Websocket::Client
-  VERSION = "0.0.0"
+  VERSION = "0.0.1"
 
   # Running ruby >= version?
   # @param gte_version [String]
