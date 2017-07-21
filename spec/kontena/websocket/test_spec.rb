@@ -77,9 +77,16 @@ RSpec.describe Kontena::Websocket::Client do
       let(:server_thread) do
         Thread.new do
           loop do
+            logger.debug "accept..."
             client = tcp_server.accept
-            client.readpartial(1024)
-            client.close
+
+            begin
+              logger.debug "read..."
+              client.readpartial(1024)
+            ensure
+              logger.debug "close..."
+              client.close
+            end
           end
         end
       end
