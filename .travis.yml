@@ -10,4 +10,4 @@ before_install: gem install bundler -v 1.15.1
 install:
   - bundle install --path vendor/bundle
 script:
-  - LOG_LEVEL=0 bundle exec rspec
+  - bundle exec rspec
