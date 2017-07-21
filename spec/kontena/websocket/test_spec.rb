@@ -430,19 +430,14 @@ RSpec.describe Kontena::Websocket::Client do
 
       context "with a full send buffer" do
         it 'raises write timeout if the server blocks' do
+          subject.connect
+
+          # block the server for 1.0s, enough for the spam loop to fill the socket read+write buffers
+          subject.send('sleep')
+
           expect{
-            described_class.connect(url, **options) do |subject|
-              # XXX: kill thread?
-              Thread.new do
-                loop do
-                  subject.send('spam' * 1024 * 8) # ~8KB
-                end
-              end
-
-              # block the server for 1.0s, enough for the sender_thread to fill the socket read+write buffers
-              subject.send('sleep')
-
-              subject.read
+            loop do
+              subject.send('spam' * 1024 * 8) # ~8KB
             end
           }.to raise_error(Kontena::Websocket::TimeoutError, 'write timeout after 0.12s')
         end
