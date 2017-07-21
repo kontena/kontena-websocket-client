@@ -28,7 +28,7 @@ RSpec.describe Kontena::Websocket::Client::Connection do
     expect(socket).to receive(:write_nonblock).with('asdf').and_raise(Class.new(Errno::ETIMEDOUT) do
       include IO::WaitWritable
     end)
-    expect(socket).to receive(:wait_writable).with(nil).and_return(socket)
+    expect(subject).to receive(:wait_socket_readable!).with(socket, nil).and_return(socket)
     expect(socket).to receive(:write_nonblock).with('asdf').and_return(4)
 
     subject.write('asdf')
@@ -41,7 +41,7 @@ RSpec.describe Kontena::Websocket::Client::Connection do
       expect(socket).to receive(:write_nonblock).with('asdf').and_raise(Class.new(Errno::ETIMEDOUT) do
         include IO::WaitWritable
       end)
-      expect(socket).to receive(:wait_writable).with(1.0).and_return(nil)
+      expect(subject).to receive(:wait_socket_writable!).with(socket, 1.0).and_return(nil)
 
       expect{
         subject.write('asdf')

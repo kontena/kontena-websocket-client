@@ -7,19 +7,23 @@ class Kontena::Websocket::Client::Connection
     # @param socket [Socket]
     # @param timeout [Float] default (nil) blocks indefinitely
     # @raise [Kontena::Websocket::TimeoutError]
-    def wait_socket_readable(socket, timeout = nil)
+    def wait_socket_readable!(socket, timeout = nil)
       debug "wait read: timeout=#{timeout}"
 
-      @socket.wait_readable(timeout) or raise Kontena::Websocket::TimeoutError, "read timeout after #{timeout}s"
+      unless @socket.wait_readable(timeout)
+        raise Kontena::Websocket::TimeoutError, "read timeout after #{timeout}s"
+      end
     end
 
     # @param socket [Socket]
     # @param timeout [Float] default (nil) blocks indefinitely
     # @raise [Kontena::Websocket::TimeoutError]
-    def wait_socket_writable(socket, timeout = nil)
+    def wait_socket_writable!(socket, timeout = nil)
       debug "wait write: timeout=#{timeout}"
 
-      @socket.wait_writable(timeout) or raise Kontena::Websocket::TimeoutError, "write timeout after #{timeout}s"
+      unless @socket.wait_writable(timeout)
+        raise Kontena::Websocket::TimeoutError, "write timeout after #{timeout}s"
+      end
     end
   end
 
@@ -30,19 +34,23 @@ class Kontena::Websocket::Client::Connection
     # @param socket [Socket]
     # @param timeout [Float] default (nil) blocks indefinitely
     # @raise [Kontena::Websocket::TimeoutError]
-    def wait_socket_readable(socket, timeout = nil)
+    def wait_socket_readable!(socket, timeout = nil)
       debug "wait read: timeout=#{timeout}"
 
-      IO.select([socket], nil, nil, timeout) or raise Kontena::Websocket::TimeoutError, "read timeout after #{timeout}s"
+      unless IO.select([socket], nil, nil, timeout)
+        raise Kontena::Websocket::TimeoutError, "read timeout after #{timeout}s"
+      end
     end
 
     # @param socket [Socket]
     # @param timeout [Float] default (nil) blocks indefinitely
     # @raise [Kontena::Websocket::TimeoutError]
-    def wait_socket_writable(socket, timeout = nil)
+    def wait_socket_writable!(socket, timeout = nil)
       debug "wait write: timeout=#{timeout}"
 
-      IO.select(nil, [socket], nil, timeout) or raise Kontena::Websocket::TimeoutError, "write timeout after #{timeout}s"
+      unless IO.select(nil, [socket], nil, timeout)
+        raise Kontena::Websocket::TimeoutError, "write timeout after #{timeout}s"
+      end
     end
   end
 
@@ -76,10 +84,10 @@ class Kontena::Websocket::Client::Connection
   def nonblocking_timeout(timeout = nil, &block)
     return yield
   rescue IO::WaitReadable
-    wait_socket_readable(@socket, timeout) # raises Kontena::Websocket::TimeoutError
+    wait_socket_readable!(@socket, timeout) # raises Kontena::Websocket::TimeoutError
     retry
   rescue IO::WaitWritable
-    wait_socket_writable(@socket, timeout) # raises Kontena::Websocket::TimeoutError
+    wait_socket_writable!(@socket, timeout) # raises Kontena::Websocket::TimeoutError
     retry
   end
 
