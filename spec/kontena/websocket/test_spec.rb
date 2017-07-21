@@ -189,7 +189,17 @@ RSpec.describe Kontena::Websocket::Client do
         OpenSSL::X509::Name.parse "/CN=localhost"
       end
       let(:ssl_key) do
-        ssl_key = OpenSSL::PKey::RSA.new(1024)
+        begin
+          ssl_key = OpenSSL::PKey::RSA.new(1024)
+        rescue OpenSSL::PKey::RSAError => exc
+          if exc.message == 'BN lib' && !Kontena::Websocket::Client.ruby_version?('2.3')
+            # workaround issue #6
+            logger.warn exc
+            retry
+          else
+            raise
+          end
+        end
       end
       let(:ssl_cert) do
         key = ssl_key
