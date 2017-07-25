@@ -1,7 +1,7 @@
 # coding: utf-8
 Gem::Specification.new do |spec|
   spec.name          = "kontena-websocket-client"
-  spec.version       = '0.1.0'
+  spec.version       = '0.1.1.dev'
   spec.authors       = ["Kontena, Inc"]
   spec.email         = ["info@kontena.io"]
 
