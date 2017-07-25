@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gorilla/websocket"
-	"io"
 	"log"
 	"net/http"
 )
@@ -14,7 +13,7 @@ var websocketUpgrader = websocket.Upgrader{}
 func websocketEcho(conn *websocket.Conn) error {
 	for {
 		if messageType, data, err := conn.ReadMessage(); err != nil {
-			if err == io.EOF {
+			if websocket.IsCloseError(err, 1000) {
 				break
 			} else {
 				return fmt.Errorf("websocket read: %v", err)
@@ -46,7 +45,9 @@ func EchoHandler(w http.ResponseWriter, r *http.Request) {
 		if err := websocketEcho(websocketConn); err != nil {
 			log.Printf("Websocket echo error: %v", err)
 		} else {
-			log.Printf("Websocket close: %v", r.RemoteAddr)
+			if !options.Quiet {
+				log.Printf("Websocket close: %v", r.RemoteAddr)
+			}
 		}
 	}
 }
