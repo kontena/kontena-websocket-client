@@ -6,6 +6,13 @@ require 'kontena-websocket-client'
 Thread.abort_on_exception = true
 
 log_level = ENV['LOG_LEVEL'] || Logger::WARN
+WEBSOCKET_OPTIONS = {
+  connect_timeout: 1.0,
+  open_timeout: 1.0,
+  ping_timeout: 1.0,
+  ping_interval: nil,
+  write_timeout: 5.0,
+}
 
 $logger = Logger.new(STDERR)
 $logger.level = log_level
@@ -17,8 +24,8 @@ def with_rate(rate, duration, &block)
   t0 = Time.now
   interval = 1.0 / rate
   count = 0
-  total_yield = 0.0
   count_miss = 0
+  total_yield = 0.0
 
   while (t = Time.now) < t0 + duration
     yield t
@@ -43,7 +50,7 @@ def with_rate(rate, duration, &block)
     time: t_total,
     count: count,
     rate: count / t_total,
-    util: total_yield / duration,
+    util: total_yield / t_total,
     miss: (count_miss / count),
   }
 end
@@ -58,6 +65,8 @@ def websocket_benchark_sender(client, rate: 1000, duration: 5.0, message_size: 1
 
     total_size += message_size
   end
+
+  $logger.info "write close..."
 
   client.close()
 
@@ -81,6 +90,8 @@ def websocket_benchmark_reader(client)
     latency_total += (t - t_f)
   end
 
+  $logger.info "read done"
+
   return {
     count: count,
     bytes: bytes,
@@ -92,7 +103,7 @@ def websocket_benchmark(url, **options)
   send_thread = nil
   read_stats = nil
 
-  Kontena::Websocket::Client.connect(url) do |client|
+  Kontena::Websocket::Client.connect(url, **WEBSOCKET_OPTIONS) do |client|
     $logger.info "connect: #{client}"
 
     send_thread = Thread.new {
@@ -114,10 +125,10 @@ rates = (ENV['RATES'].split.map{|r| Integer(r)} || RATES)
 duration = (ENV['DURATION'] || 5.0).to_f
 message_size = (ENV['MESSAGE_SIZE'] || 1000).to_i
 
-HEADER = '%5ss %6s/s: %9s @ %9s/s (%5s%% + %5s%%) recv %9s @ ~%6ss'
-FORMAT = '%5.2fs %6d/s: %9d @ %9.2f/s (%5.2f%% + %5.2f%%) recv %9d @ ~%6.3fs'
+HEADER = '%5ss %6s/s: %9s @ %9s/s (%5s%% ~ %5s%%) recv %9s @ %9ss'
+FORMAT = '%5.2fs %6d/s: %9d @ %9.2f/s (%5.2f%% ~ %5.2f%%) recv %9d @ %9.6fs'
 
-puts HEADER % ['time ', 'rate', 'count', 'rate', 'util', 'miss', 'count', 'latency ']
+puts HEADER % ['time ', 'rate', 'count', 'rate', 'util', 'miss', 'count', 'avg lat ']
 
 for rate in rates
   options = {
