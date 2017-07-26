@@ -17,11 +17,22 @@ run_benchmark do |url, **options|
       $logger.info "open"
 
       send_thread = Thread.new {
+        send = 0
+
         send_stats = benchmark_sender(**options) do |msg|
-          ws.send(msg)
+          send += 1
+          $logger.debug "send %d" % send
+
+          EM.next_tick {
+            ws.send(msg)
+          }
         end
 
-        ws.close()
+        $logger.info "close..."
+
+        EM.next_tick {
+          ws.close()
+        }
 
         send_stats
       }
@@ -29,12 +40,18 @@ run_benchmark do |url, **options|
       reader.start()
     end
 
+    read = 0
+
     ws.on :message do |event|
+      read += 1
+
+      $logger.debug "read %d" % read
+
       reader.on_message(Time.now, event.data)
     end
 
     ws.on :close do |event|
-      $logger.info "close"
+      $logger.info "closed"
 
       reader.stop
       EM.stop
