@@ -47,6 +47,10 @@ func websocketAsyncReader(conn *websocket.Conn, c chan websocketMessage) error {
 	for {
 		if messageType, data, err := conn.ReadMessage(); err != nil {
 			if websocket.IsCloseError(err, 1000) {
+				if options.Verbose {
+					log.Printf("websocket read close: %v", err)
+				}
+
 				break
 			} else {
 				return fmt.Errorf("websocket read: %v", err)
@@ -102,7 +106,19 @@ func websocketAsyncWriter(conn *websocket.Conn, c <-chan websocketMessage) error
 
 func websocketEchoAsync(conn *websocket.Conn) error {
 	var messageChan = make(chan websocketMessage, options.DropBuffer)
+	var readClose struct {
+		code int
+		text string
+	}
 	var readError error
+
+	// custom close handler to send close frame after reader drains the message queue
+	conn.SetCloseHandler(func(code int, text string) error {
+		readClose.code = code
+		readClose.text = text
+
+		return nil
+	})
 
 	go func() {
 		if err := websocketAsyncReader(conn, messageChan); err != nil {
@@ -116,6 +132,16 @@ func websocketEchoAsync(conn *websocket.Conn) error {
 	} else if readError != nil {
 		return readError
 	} else {
+		var closeMessage = websocket.FormatCloseMessage(readClose.code, readClose.text)
+
+		if err := conn.WriteControl(websocket.CloseMessage, closeMessage, time.Time{}); err != nil {
+			log.Printf("websocket write close: %v", err)
+		} else {
+			if options.Verbose {
+				log.Printf("websocket write close")
+			}
+		}
+
 		return nil
 	}
 }
