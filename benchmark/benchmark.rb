@@ -43,19 +43,21 @@ def with_rate(rate, duration, &block)
   }
 end
 
-# @yield [message]
+# @yield [seq, message]
 # @return [Hash] after duration
 def benchmark_sender(rate: 1000, duration: 5.0, message_size: 1000)
   total_size = 0
+  seq = 0
 
-  padding = 'X'*(message_size - 15)
+  padding = 'X'*(message_size - 16 - 16)
 
   stats = with_rate(rate, duration) do |t|
-    message = '%15.6f %s' % [t.to_f, padding]
+    message = '%15.6f %15d %s' % [t.to_f, seq, padding]
 
-    yield message
+    yield message, seq
 
     total_size += message.length
+    seq += 1
   end
 
   return stats.merge(
@@ -76,14 +78,18 @@ class BenchmarkReader
 
   # @param time [Time] Time.now
   # @param message [String]
+  # @return [Integer, Float] seq, rtt
   def on_message(time, message)
-    msg_time_s, padding = message.split(' ', 2)
+    msg_time_s, msg_seq_s, padding = message.split(' ', 3)
     msg_t = msg_time_s.to_f
+    msg_seq = msg_seq_s.to_i
     t = time.to_f
 
     @count += 1
     @bytes += message.length
     @latency_total += (t - msg_t)
+
+    return msg_seq, t - msg_t
   end
 
   # @return [Hash]

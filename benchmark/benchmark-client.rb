@@ -23,7 +23,7 @@ run_benchmark do |url, **options|
     $logger.info "connect: #{client}"
 
     send_thread = Thread.new {
-      send_stats = benchmark_sender(**options) do |msg|
+      send_stats = benchmark_sender(**options) do |msg, seq|
         client.send(msg)
       end
 
