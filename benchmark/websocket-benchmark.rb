@@ -121,7 +121,7 @@ end
 url = ENV['URL'] || 'ws://localhost:8080/echo'
 
 RATES = [1, 10, 100, 1000, 3000, 5000, 10000]
-rates = (ENV['RATES'].split.map{|r| Integer(r)} || RATES)
+rates = (ENV['RATES']&.split&.map{|r| Integer(r)} || RATES)
 duration = (ENV['DURATION'] || 5.0).to_f
 message_size = (ENV['MESSAGE_SIZE'] || 1000).to_i
 
