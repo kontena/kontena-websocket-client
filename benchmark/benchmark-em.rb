@@ -18,16 +18,14 @@ run_benchmark do |url, **options|
 
       send_thread = Thread.new {
         send_stats = benchmark_sender(**options) do |msg, seq|
-          $logger.debug "send seq=%d" % [seq]
-
           EM.next_tick {
+            $logger.debug "send seq=%d" % [seq]
             ws.send(msg)
           }
         end
 
-        $logger.info "close..."
-
         EM.next_tick {
+          $logger.info "close..."
           ws.close()
         }
 
