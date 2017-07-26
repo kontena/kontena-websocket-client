@@ -79,6 +79,7 @@ def websocket_benchmark_reader(client)
   count = 0
   bytes = 0
   latency_total = 0.0
+  t_start = Time.now
 
   client.read do |message|
     t = Time.now.to_f
@@ -90,11 +91,18 @@ def websocket_benchmark_reader(client)
     latency_total += (t - t_f)
   end
 
+  t_end = Time.now
+
   $logger.info "read done"
 
+  t_total = t_end - t_start
+
   return {
+    time: t_total,
     count: count,
+    rate: count / t_total,
     bytes: bytes,
+    bytes_rate: bytes / t_total,
     latency_avg: latency_total / count,
   }
 end
@@ -125,8 +133,8 @@ rates = (ENV['RATES']&.split&.map{|r| Integer(r)} || RATES)
 duration = (ENV['DURATION'] || 5.0).to_f
 message_size = (ENV['MESSAGE_SIZE'] || 1000).to_i
 
-HEADER = '%5s  %6s/s: send %9s @ %9s/s (%5s%% ~ %5s%%) recv %9s @ %12s/s ~ %9s'
-FORMAT = '%5.2fs %6d/s: send %9d @ %9.2f/s (%5.2f%% ~ %5.2f%%) recv %9d @ %12s/s ~ %9.6fs'
+HEADER = '%5s  %6s/s: send %9s @ %9s/s (%6s%% %6s%%) read %9s @ %9s/s (%6s%%) = %12s/s ~%9s'
+FORMAT = '%5.2fs %6d/s: send %9d @ %9.2f/s (%6.2f%% %6.2f%%) read %9d @ %9.2f/s (%6.2f%%) = %12s/s ~%9.6fs'
 
 def si(val)
   if val > 10**9
@@ -140,7 +148,7 @@ def si(val)
   end
 end
 
-puts HEADER % ['time ', 'rate', 'count', 'messages', 'util', 'miss', 'count', 'bytes', 'avg latency']
+puts HEADER % ['time ', 'rate', 'count', 'messages', 'util', 'miss', 'count', 'messages', 'drop', 'bytes', 'latency']
 
 for rate in rates
   options = {
@@ -153,9 +161,11 @@ for rate in rates
 
   send_stats, read_stats = websocket_benchmark(url, **options)
 
+  drop_ratio = 1.0 - read_stats[:count].to_f / send_stats[:count].to_f
+
   puts FORMAT % [
     duration, rate,
     send_stats[:count], send_stats[:rate], send_stats[:util] * 100.0, send_stats[:miss] * 100.0,
-    read_stats[:count], si(read_stats[:bytes] / send_stats[:time]), read_stats[:latency_avg],
+    read_stats[:count], read_stats[:rate], drop_ratio * 100.0, si(read_stats[:bytes_rate]), read_stats[:latency_avg],
   ]
 end
