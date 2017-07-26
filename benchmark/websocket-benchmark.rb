@@ -133,8 +133,8 @@ rates = (ENV['RATES']&.split&.map{|r| Integer(r)} || RATES)
 duration = (ENV['DURATION'] || 5.0).to_f
 message_size = (ENV['MESSAGE_SIZE'] || 1000).to_i
 
-HEADER = '%5s  %6s/s: send %9s @ %9s/s (%6s%% %6s%%) read %9s @ %9s/s (%6s%%) = %12s/s ~%9s'
-FORMAT = '%5.2fs %6d/s: send %9d @ %9.2f/s (%6.2f%% %6.2f%%) read %9d @ %9.2f/s (%6.2f%%) = %12s/s ~%9.6fs'
+HEADER = '%5s  %6s/s %9s: send @ %9s/s (%6s%% %6s%%) read @ %9s/s (%6s%%) = %12s/s ~%9s'
+FORMAT = '%5.2fs %6d/s %9d: send @ %9.2f/s (%6.2f%% %6.2f%%) read @ %9.2f/s (%6.2f%%) = %12s/s ~%9.6fs'
 
 def si(val)
   if val > 10**9
@@ -148,7 +148,7 @@ def si(val)
   end
 end
 
-puts HEADER % ['time ', 'rate', 'count', 'messages', 'util', 'miss', 'count', 'messages', 'drop', 'bytes', 'latency']
+puts HEADER % ['TIME ', 'RATE', 'COUNT', 'MESSAGES', 'UTIL', 'MISS', 'MESSAGES', 'DROP', 'BYTES', 'LATENCY']
 
 for rate in rates
   options = {
@@ -164,8 +164,8 @@ for rate in rates
   drop_ratio = 1.0 - read_stats[:count].to_f / send_stats[:count].to_f
 
   puts FORMAT % [
-    duration, rate,
-    send_stats[:count], send_stats[:rate], send_stats[:util] * 100.0, send_stats[:miss] * 100.0,
-    read_stats[:count], read_stats[:rate], drop_ratio * 100.0, si(read_stats[:bytes_rate]), read_stats[:latency_avg],
+    duration, rate, send_stats[:count],
+    send_stats[:rate], send_stats[:util] * 100.0, send_stats[:miss] * 100.0,
+    read_stats[:rate], drop_ratio * 100.0, si(read_stats[:bytes_rate]), read_stats[:latency_avg],
   ]
 end
