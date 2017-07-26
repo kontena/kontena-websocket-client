@@ -40,11 +40,11 @@ run_benchmark do |url, **options|
     read = 0
 
     ws.on :message do |event|
-      read += 1
-
       seq, rtt = reader.on_message(Time.now, event.data)
 
       $logger.debug "read %d: seq=%d rtt=%.2f" % [read, seq, rtt]
+
+      read += 1
     end
 
     ws.on :close do |event|
