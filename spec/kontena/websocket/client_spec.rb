@@ -439,13 +439,39 @@ RSpec.describe Kontena::Websocket::Client do
         subject.ping
       end
 
-      it "sends ping with callback on pong" do
-        ping_delay = nil
+      context 'with an #on_pong callback' do
+        before do
+          @ping_delay = nil
 
-        subject.on_pong do |delay|
-          ping_delay = delay
+          subject.on_pong do |delay|
+            @ping_delay = delay
+          end
         end
 
+        it "sends ping with callback on pong" do
+          ping_id = nil
+          ping_block = nil
+
+          expect(driver).to receive(:ping) do |id, &block|
+            ping_id = id
+            ping_block = block
+
+            true
+          end
+
+          subject.ping
+
+          expect(ping_block).to_not be nil
+          expect(@ping_delay).to be nil
+
+          ping_block.call
+
+          expect(@ping_delay).to_not be nil
+          expect(@ping_delay).to be > 0.0
+        end
+      end
+
+      it "sends ping without callback on pong" do
         ping_id = nil
         ping_block = nil
 
@@ -459,12 +485,8 @@ RSpec.describe Kontena::Websocket::Client do
         subject.ping
 
         expect(ping_block).to_not be nil
-        expect(ping_delay).to be nil
 
         ping_block.call
-
-        expect(ping_delay).to_not be nil
-        expect(ping_delay).to be > 0.0
       end
 
       it "fails if driver returns false" do

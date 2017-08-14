@@ -348,7 +348,7 @@ class Kontena::Websocket::Client
           debug "ping-pong at #{ping_at} in #{ping_delay}s"
 
           # XXX: defer call without mutex?
-          @on_pong.call(ping_delay) # TODO: also pass ping_at
+          @on_pong.call(ping_delay) if @on_pong # TODO: also pass ping_at
         end
       end
     end
