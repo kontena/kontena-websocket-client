@@ -1,4 +1,6 @@
 [![Build Status](https://travis-ci.org/kontena/kontena-websocket-client.svg?branch=master)](https://travis-ci.org/kontena/kontena-websocket-client)
+[![Gem Version](https://badge.fury.io/rb/kontena-websocket-client.svg)](https://badge.fury.io/rb/kontena-websocket-client)
+[![Yard Docs](http://img.shields.io/badge/yard-docs-blue.svg)](http://www.rubydoc.info/github/kontena/kontena-websocket-client/master)
 
 # Kontena::Websocket::Client
 
