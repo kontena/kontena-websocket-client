@@ -35,7 +35,7 @@ class Kontena::Websocket::Client
   OPEN_TIMEOUT = 60.0
   PING_INTERVAL = 60.0
   PING_TIMEOUT = 10.0
-  PING_STRFTIME = '%FT%T.%NZ' # high-percision RFC 3339
+  PING_STRFTIME = '%FT%T.%NZ' # high-precision RFC 3339
   CLOSE_TIMEOUT = 60.0
   WRITE_TIMEOUT = 60.0
 
